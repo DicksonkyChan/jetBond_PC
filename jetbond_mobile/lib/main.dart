@@ -8,6 +8,9 @@ import 'employee_work_history_screen.dart';
 import 'services/api_service.dart';
 import 'widgets/job_card.dart';
 import 'utils/date_utils.dart';
+import 'services/notification_service.dart';
+import 'notifications_screen.dart';
+import 'job_management_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,6 +39,8 @@ class JetBondApp extends StatelessWidget {
         '/job-detail': (context) => JobDetailScreen(),
         '/job-history': (context) => JobHistoryScreen(),
         '/employee-work-history': (context) => EmployeeWorkHistoryScreen(employeeId: UserService.currentUserId ?? ''),
+        '/notifications': (context) => NotificationsScreen(),
+        '/job-management': (context) => JobManagementScreen(),
       },
     );
   }
@@ -86,6 +91,9 @@ class _LoginScreenState extends State<LoginScreen> {
     if (account != null && account['password'] == password) {
       AppLogger.logLogin(account['userId']!);
       UserService.setCurrentUser(account['userId']!, account['type']!);
+      
+      // Connect to notifications
+      NotificationService.connect(account['userId']!);
       
       // Load existing profile from server
       try {
@@ -251,6 +259,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   List<dynamic> myApplications = [];
   Set<String> appliedJobs = {};
   String? activeApplicationJobId;
+  Map<String, dynamic>? currentJob;
   bool isLoading = false;
   Timer? _refreshTimer;
 
@@ -259,11 +268,24 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     super.initState();
     _loadJobs();
     _startAutoRefresh();
+    NotificationService.addListener(_onNotification);
+  }
+
+  void _onNotification(Map<String, dynamic> notification) {
+    if (mounted) {
+      NotificationService.showNotificationSnackBar(context, notification);
+      if (notification['type'] == 'job_match') {
+        _loadJobs(); // Refresh jobs when new matches arrive
+      } else if (notification['type'] == 'selection_result' || notification['type'] == 'job_completed') {
+        _loadJobs(); // Refresh to update current job status
+      }
+    }
   }
 
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    NotificationService.removeListener(_onNotification);
     super.dispose();
   }
 
@@ -277,6 +299,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     setState(() => isLoading = true);
     try {
       final data = await ApiService.get('/jobs');
+      await _loadCurrentJob();
       setState(() {
         jobs = data is List ? List<dynamic>.from(data) : [];
         isLoading = false;
@@ -284,6 +307,29 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     } catch (e) {
       setState(() => isLoading = false);
       _showSnackBar('Error loading jobs: $e');
+    }
+  }
+
+  Future<void> _loadCurrentJob() async {
+    try {
+      final response = await http.get(
+        Uri.parse('http://localhost:8080/employee/${UserService.currentUserId}/current-job'),
+      );
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        setState(() {
+          currentJob = data['job'];
+        });
+      } else {
+        setState(() {
+          currentJob = null;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        currentJob = null;
+      });
     }
   }
 
@@ -348,6 +394,10 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
       appBar: AppBar(
         title: Text('👷 Employee Dashboard'),
         actions: [
+          IconButton(
+            icon: Icon(Icons.notifications),
+            onPressed: () => Navigator.pushNamed(context, '/notifications'),
+          ),
           IconButton(
             icon: Icon(Icons.history),
             onPressed: () => Navigator.pushNamed(context, '/employee-work-history'),
@@ -416,6 +466,54 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         onRefresh: _loadJobs,
         child: Column(
           children: [
+            // Current Job Section
+            if (currentJob != null)
+              Container(
+                width: double.infinity,
+                padding: EdgeInsets.all(16),
+                color: Colors.orange.shade50,
+                child: Column(
+                  children: [
+                    Text(
+                      '🚧 Current Job',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.orange.shade800),
+                    ),
+                    SizedBox(height: 8),
+                    Card(
+                      elevation: 2,
+                      child: Padding(
+                        padding: EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              currentJob!['title'] ?? 'No Title',
+                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                            ),
+                            SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Icon(Icons.location_on, size: 14, color: Colors.grey[600]),
+                                Text(' ${currentJob!['district']} • '),
+                                Icon(Icons.attach_money, size: 14, color: Colors.grey[600]),
+                                Text(' HK\$${currentJob!['hourlyRate']}/hr • '),
+                                Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
+                                Text(' ${currentJob!['duration']}'),
+                              ],
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              'Status: IN PROGRESS',
+                              style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            
             Container(
               width: double.infinity,
               padding: EdgeInsets.all(16),
@@ -662,6 +760,22 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
   void initState() {
     super.initState();
     _loadMyJobs();
+    NotificationService.addListener(_onNotification);
+  }
+
+  void _onNotification(Map<String, dynamic> notification) {
+    if (mounted) {
+      NotificationService.showNotificationSnackBar(context, notification);
+      if (notification['type'] == 'job_response') {
+        _loadMyJobs(); // Refresh jobs when new applications arrive
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    NotificationService.removeListener(_onNotification);
+    super.dispose();
   }
 
   Future<void> _loadMyJobs() async {
@@ -670,6 +784,7 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
       final data = await ApiService.get('/jobs?employerId=${UserService.currentUserId}');
       final allJobs = data is List ? List<dynamic>.from(data) : [];
       setState(() {
+        // Only show jobs that are still looking for employees (matching status)
         myJobs = allJobs.where((job) => job['status'] == 'matching').toList();
         isLoading = false;
       });
@@ -821,6 +936,14 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
       appBar: AppBar(
         title: Text('👔 Employer Dashboard'),
         actions: [
+          IconButton(
+            icon: Icon(Icons.notifications),
+            onPressed: () => Navigator.pushNamed(context, '/notifications'),
+          ),
+          IconButton(
+            icon: Icon(Icons.manage_accounts),
+            onPressed: () => Navigator.pushNamed(context, '/job-management'),
+          ),
           IconButton(
             icon: Icon(Icons.history),
             onPressed: () => Navigator.pushNamed(context, '/job-history'),

@@ -51,20 +51,11 @@ class _EmployeeWorkHistoryScreenState extends State<EmployeeWorkHistoryScreen> {
   }
 
   Widget _buildMinimizedJob(Map<String, dynamic> job) {
+    final rating = job['rating'];
     return Card(
       margin: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       elevation: 2,
-      child: ListTile(
-        leading: Icon(Icons.work, color: Colors.blue),
-        title: Text(
-          job['title'] ?? 'No Title',
-          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-        ),
-        subtitle: Text('HK\$${job['hourlyRate']}/hr • ${job['district']}'),
-        trailing: Text(
-          '✅ ${AppDateUtils.DateUtils.formatDate(job['selectedAt'])}',
-          style: TextStyle(fontSize: 12, color: Colors.blue),
-        ),
+      child: InkWell(
         onTap: () {
           setState(() {
             final jobId = job['jobId']?.toString() ?? '';
@@ -73,6 +64,43 @@ class _EmployeeWorkHistoryScreenState extends State<EmployeeWorkHistoryScreen> {
             }
           });
         },
+        child: Padding(
+          padding: EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      job['title'] ?? 'No Title',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Text('HK\$${job['hourlyRate']}/hr • ${job['district']}',
+                            style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                        if (rating != null) ...[
+                          Text(' • ', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                          _buildRatingWidget(rating, small: true),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              Text(
+                AppDateUtils.DateUtils.formatDate(job['completedAt'] ?? job['selectedAt']),
+                style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+              ),
+              SizedBox(width: 8),
+              Icon(Icons.expand_more, size: 16, color: Colors.grey),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -88,6 +116,50 @@ class _EmployeeWorkHistoryScreenState extends State<EmployeeWorkHistoryScreen> {
         expandedJobs.clear();
       }
     });
+  }
+
+  Widget _buildRatingWidget(String rating, {bool small = false}) {
+    IconData icon;
+    Color color;
+    String text;
+    
+    switch (rating) {
+      case 'good':
+        icon = Icons.thumb_up;
+        color = Colors.green;
+        text = 'Good';
+        break;
+      case 'bad':
+        icon = Icons.thumb_down;
+        color = Colors.red;
+        text = 'Poor';
+        break;
+      default:
+        icon = Icons.horizontal_rule;
+        color = Colors.orange;
+        text = 'Neutral';
+    }
+    
+    if (small) {
+      return Icon(icon, color: color, size: 14);
+    }
+    
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 16),
+          SizedBox(width: 4),
+          Text(text, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w500)),
+        ],
+      ),
+    );
   }
 
   void _showSnackBar(String message) {
@@ -162,7 +234,7 @@ class _EmployeeWorkHistoryScreenState extends State<EmployeeWorkHistoryScreen> {
                           itemCount: workHistory.length,
                           itemBuilder: (context, index) {
                             final job = workHistory[index];
-                            final isOld = _isOldJob(job['selectedAt']);
+                            final isOld = _isOldJob(job['completedAt'] ?? job['selectedAt']);
                             final jobId = job['jobId']?.toString() ?? '';
                             final isExpanded = expandedJobs.contains(jobId);
                             
@@ -170,24 +242,61 @@ class _EmployeeWorkHistoryScreenState extends State<EmployeeWorkHistoryScreen> {
                               return _buildMinimizedJob(job);
                             }
                             
-                            return JobCard(
-                              job: job,
-                              showStatus: false,
-                              trailing: Container(
-                                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                decoration: BoxDecoration(
-                                  color: Colors.blue.shade100,
-                                  borderRadius: BorderRadius.circular(15),
-                                ),
-                                child: Text(
-                                  '✅ HIRED ${AppDateUtils.DateUtils.formatFullDate(job['selectedAt'])}',
-                                  style: TextStyle(
-                                    color: Colors.blue.shade800,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
+                            return Column(
+                              children: [
+                                JobCard(
+                                  job: job,
+                                  showStatus: true,
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (isOld)
+                                        IconButton(
+                                          icon: Icon(Icons.expand_less),
+                                          onPressed: () {
+                                            setState(() {
+                                              final jobId = job['jobId']?.toString() ?? '';
+                                              if (jobId.isNotEmpty) {
+                                                expandedJobs.remove(jobId);
+                                              }
+                                            });
+                                          },
+                                        ),
+                                    ],
                                   ),
                                 ),
-                              ),
+                                Container(
+                                  margin: EdgeInsets.symmetric(horizontal: 16),
+                                  padding: EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.blue.shade50,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Container(
+                                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                        decoration: BoxDecoration(
+                                          color: Colors.blue.shade100,
+                                          borderRadius: BorderRadius.circular(15),
+                                        ),
+                                        child: Text(
+                                          '✅ COMPLETED ${AppDateUtils.DateUtils.formatFullDate(job['completedAt'] ?? job['selectedAt'])}',
+                                          style: TextStyle(
+                                            color: Colors.green.shade800,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ),
+                                      if (job['rating'] != null)
+                                        _buildRatingWidget(job['rating']),
+                                    ],
+                                  ),
+                                ),
+                                SizedBox(height: 8),
+                              ],
                             );
                           },
                         ),

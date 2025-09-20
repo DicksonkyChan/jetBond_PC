@@ -146,7 +146,12 @@ wss.on('connection', (ws, req) => {
       if (data.type === 'auth' && data.userId) {
         clients.set(data.userId, ws);
         ws.userId = data.userId;
-        ws.send(JSON.stringify({ type: 'auth_success', userId: data.userId }));
+        logToFile(`🔌 User ${data.userId} connected to WebSocket`);
+        ws.send(JSON.stringify({ 
+          type: 'auth_success', 
+          userId: data.userId,
+          timestamp: new Date().toISOString()
+        }));
       }
     } catch (error) {
       logToFile(`WebSocket message error: ${error}`);
@@ -155,6 +160,7 @@ wss.on('connection', (ws, req) => {
   
   ws.on('close', () => {
     if (ws.userId) {
+      logToFile(`🔌 User ${ws.userId} disconnected from WebSocket`);
       clients.delete(ws.userId);
     }
   });
@@ -164,7 +170,10 @@ wss.on('connection', (ws, req) => {
 function sendNotification(userId, notification) {
   const client = clients.get(userId);
   if (client && client.readyState === WebSocket.OPEN) {
+    logToFile(`📢 Sending notification to ${userId}: ${notification.type}`);
     client.send(JSON.stringify(notification));
+  } else {
+    logToFile(`⚠️ Cannot send notification to ${userId}: client not connected`);
   }
 }
 
@@ -351,13 +360,13 @@ function checkExpiredJobs() {
       logToFile(`Job ${jobId} expired at ${job.expiredAt}`);
       
       // Set all applicants back to open_to_work
-      resetApplicantsStatus(job);
+      resetApplicantsStatus(job, 'Job expired');
     }
   }
 }
 
 // Reset applicants status to open_to_work when job expires or is cancelled
-async function resetApplicantsStatus(job) {
+async function resetApplicantsStatus(job, reason = 'Job no longer available') {
   const responses = job.matchingWindow?.responses || [];
   for (const response of responses) {
     const employee = users.get(response.employeeId);
@@ -365,12 +374,14 @@ async function resetApplicantsStatus(job) {
       employee.employeeStatus = 'open_to_work';
       employee.currentJobId = null;
       await saveUserToDynamoDB(employee);
-      logToFile(`Reset employee ${response.employeeId} status to open_to_work`);
+      logToFile(`Reset employee ${response.employeeId} status to open_to_work: ${reason}`);
       
       // Notify employee
       sendNotification(response.employeeId, {
         type: 'status_reset',
-        message: 'Your status has been reset to "Open to work" due to job expiration/cancellation',
+        jobId: job.jobId,
+        jobTitle: job.title,
+        message: `Your status has been reset to "Open to work". Reason: ${reason}`,
         timestamp: new Date().toISOString()
       });
     }
@@ -465,13 +476,38 @@ app.post('/jobs/:id/matches', async (req, res) => {
 app.get('/employee/:id/work-history', async (req, res) => {
   try {
     const employeeId = req.params.id;
-    const employeeJobs = Array.from(jobs.values())
-      .filter(job => job.selectedEmployeeId === employeeId && job.status === 'assigned')
-      .sort((a, b) => new Date(b.selectedAt) - new Date(a.selectedAt));
+    logToFile(`Looking for work history for employee: ${employeeId}`);
     
-    res.json({ jobs: employeeJobs, count: employeeJobs.length });
+    const allJobs = Array.from(jobs.values());
+    const completedJobs = allJobs.filter(job => job.status === 'completed');
+    const employeeJobs = completedJobs.filter(job => job.selectedEmployeeId === employeeId);
+    
+    logToFile(`Total jobs: ${allJobs.length}, Completed jobs: ${completedJobs.length}, Employee jobs: ${employeeJobs.length}`);
+    logToFile(`Completed jobs with selectedEmployeeId: ${completedJobs.map(j => `${j.jobId}:${j.selectedEmployeeId}`).join(', ')}`);
+    
+    const sortedJobs = employeeJobs.sort((a, b) => new Date(b.completedAt || b.selectedAt) - new Date(a.completedAt || a.selectedAt));
+    
+    res.json({ jobs: sortedJobs, count: sortedJobs.length });
   } catch (error) {
     logToFile(`Get work history error: ${error}`);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get employee current job endpoint
+app.get('/employee/:id/current-job', async (req, res) => {
+  try {
+    const employeeId = req.params.id;
+    const currentJob = Array.from(jobs.values())
+      .find(job => job.selectedEmployeeId === employeeId && job.status === 'assigned');
+    
+    if (currentJob) {
+      res.json({ job: currentJob });
+    } else {
+      res.json({ job: null });
+    }
+  } catch (error) {
+    logToFile(`Get current job error: ${error}`);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -530,12 +566,19 @@ app.post('/jobs/:id/respond', async (req, res) => {
       return res.json({ success: false, message: 'Already applied to this job' });
     }
 
+    // Set employee status to busy when applying
+    employee.employeeStatus = 'busy';
+    employee.currentJobId = req.params.id;
+    await saveUserToDynamoDB(employee);
+
     // Add response
     job.matchingWindow.responses.push({
       employeeId,
       respondedAt: new Date().toISOString()
     });
     await saveJobToDynamoDB(job);
+
+    logToFile(`Employee ${employeeId} applied to job ${req.params.id}, status set to busy`);
 
     // Notify employer
     sendNotification(job.employerId, {
@@ -576,17 +619,39 @@ app.post('/jobs/:id/select', async (req, res) => {
     job.selectedAt = new Date().toISOString();
     await saveJobToDynamoDB(job);
 
-    // Notify all candidates
+    // Set selected employee to busy
+    const selectedEmployee = users.get(selectedEmployeeId);
+    if (selectedEmployee) {
+      selectedEmployee.employeeStatus = 'busy';
+      selectedEmployee.currentJobId = req.params.id;
+      await saveUserToDynamoDB(selectedEmployee);
+    }
+
+    // Release all other applicants back to open_to_work
     for (const response of job.matchingWindow.responses) {
       const isSelected = response.employeeId === selectedEmployeeId;
+      
+      if (!isSelected) {
+        const employee = users.get(response.employeeId);
+        if (employee && employee.employeeStatus !== 'open_to_work') {
+          employee.employeeStatus = 'open_to_work';
+          employee.currentJobId = null;
+          await saveUserToDynamoDB(employee);
+          logToFile(`Released employee ${response.employeeId} back to open_to_work (not selected)`);
+        }
+      }
+
+      // Notify all candidates
       sendNotification(response.employeeId, {
         type: 'selection_result',
         jobId: req.params.id,
         selected: isSelected,
+        message: isSelected ? 'Congratulations! You got the job' : 'You were not selected. Your status has been reset to "Open to work"',
         timestamp: new Date().toISOString()
       });
     }
 
+    logToFile(`Employee ${selectedEmployeeId} selected for job ${req.params.id}. Other applicants released.`);
     res.json({ success: true, message: 'Employee selected successfully' });
   } catch (error) {
     logToFile(`Selection error: ${error}`);
@@ -594,7 +659,7 @@ app.post('/jobs/:id/select', async (req, res) => {
   }
 });
 
-// Rating endpoint
+// Rating endpoint (for standalone rating after job completion)
 app.post('/jobs/:id/rate', async (req, res) => {
   try {
     const { rating, raterId, ratedUserId } = req.body;
@@ -602,9 +667,16 @@ app.post('/jobs/:id/rate', async (req, res) => {
       return res.status(400).json({ error: 'Invalid rating data' });
     }
 
+    const job = jobs.get(req.params.id);
     const user = users.get(ratedUserId);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Update job rating if not already set
+    if (job && !job.rating) {
+      job.rating = rating;
+      await saveJobToDynamoDB(job);
     }
 
     user.ratings[rating]++;
@@ -642,11 +714,72 @@ app.put('/jobs/:id/cancel', async (req, res) => {
     }
 
     // Set all applicants back to open_to_work
-    await resetApplicantsStatus(job);
+    await resetApplicantsStatus(job, 'Job cancelled by employer');
 
     res.json({ success: true, message: 'Job cancelled successfully' });
   } catch (error) {
     logToFile(`Cancel job error: ${error}`);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Complete job endpoint
+app.put('/jobs/:id/complete', async (req, res) => {
+  try {
+    const { rating } = req.body;
+    const job = jobs.get(req.params.id);
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    if (job.status !== 'assigned') {
+      logToFile(`Job ${req.params.id} has status: ${job.status}, expected: assigned`);
+      return res.status(400).json({ error: `Job is not in assigned status. Current status: ${job.status}` });
+    }
+
+    // Update job status to completed
+    job.status = 'completed';
+    job.completedAt = new Date().toISOString();
+    
+    // Store rating if provided
+    if (rating && ['good', 'neutral', 'bad'].includes(rating)) {
+      job.rating = rating;
+      
+      // Also update employee's overall rating
+      if (job.selectedEmployeeId) {
+        const employee = users.get(job.selectedEmployeeId);
+        if (employee) {
+          employee.ratings[rating]++;
+          await saveUserToDynamoDB(employee);
+        }
+      }
+    }
+    
+    await saveJobToDynamoDB(job);
+
+    // Notify employee that job is completed
+    if (job.selectedEmployeeId) {
+      const employee = users.get(job.selectedEmployeeId);
+      if (employee) {
+        employee.employeeStatus = 'open_to_work';
+        employee.currentJobId = null;
+        await saveUserToDynamoDB(employee);
+      }
+
+      sendNotification(job.selectedEmployeeId, {
+        type: 'job_completed',
+        jobId: req.params.id,
+        jobTitle: job.title,
+        rating: rating,
+        message: `Job completed${rating ? ` with ${rating} rating` : ''}`,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    logToFile(`Job ${req.params.id} completed by employer ${job.employerId}${rating ? ` with ${rating} rating` : ''}`);
+    res.json({ success: true, message: 'Job completed successfully' });
+  } catch (error) {
+    logToFile(`Complete job error: ${error}`);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

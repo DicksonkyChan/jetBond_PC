@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>JetBond WebSocket Test</title>
+</head>
+<body>
+    <h1>WebSocket Notifications Test</h1>
+    <div id="status">Disconnected</div>
+    <div id="messages"></div>
+    
+    <script>
+        const ws = new WebSocket('ws://localhost:8080');
+        const status = document.getElementById('status');
+        const messages = document.getElementById('messages');
+        
+        ws.onopen = () => {
+            status.textContent = 'Connected';
+            // Authenticate as Rikke
+            ws.send(JSON.stringify({
+                type: 'auth',
+                userId: 'rikke@jetbond.com'
+            }));
+        };
+        
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            const div = document.createElement('div');
+            div.textContent = `${new Date().toLocaleTimeString()}: ${JSON.stringify(data)}`;
+            messages.appendChild(div);
+        };
+        
+        ws.onclose = () => {
+            status.textContent = 'Disconnected';
+        };
+    </script>
+</body>
+</html>

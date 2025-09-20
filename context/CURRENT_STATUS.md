@@ -58,6 +58,10 @@ flutter run -d chrome
 - ✅ **Real-time Updates**: Jobs refresh automatically
 - ✅ **Role Switching**: Switch between employee/employer modes
 - ✅ **Logout**: Secure logout functionality
+- ✅ **Rating System**: Employers rate employees (good/neutral/poor)
+- ✅ **Work History**: Employees view completed jobs with ratings
+- ✅ **Job Management**: Employers complete jobs with ratings
+- ✅ **Smart UI**: Auto-minimize old jobs, consistent layout
 
 ### **Technical Features**
 - ✅ **REST API**: Full CRUD operations
@@ -118,17 +122,20 @@ Login → Dashboard → Job List → Apply → Server → Employer Notification
 2. **Login as Rikke** (employee)
 3. **Apply to "Urgent Server Needed" job**
 4. **Logout and login as Dee** (employer)
-5. **See application notification**
-6. **Edit profile and save changes**
-7. **Post new job and see it appear**
+5. **Accept application and hire Rikke**
+6. **Rate employee and complete job**
+7. **Login as Rikke to see work history with rating**
+8. **Test minimize/expand functionality**
 
 ## 🔄 **What's Next**
 
 ### **Immediate Enhancements**
 - Real-time WebSocket notifications
-- Job selection and rating system
+- ✅ ~~Job selection and rating system~~
 - Advanced matching algorithms
 - Mobile app builds (APK/iOS)
+- Employee profile rating display
+- Rating statistics and analytics
 
 ### **Production Deployment**
 - Replace in-memory storage with DynamoDB

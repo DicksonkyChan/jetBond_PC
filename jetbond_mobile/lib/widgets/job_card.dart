@@ -35,16 +35,23 @@ class JobCard extends StatelessWidget {
                       style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                     ),
                   ),
-                  Container(
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.green,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      'HK\$${job['hourlyRate']}/hr',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                    ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (showStatus)
+                        Container(
+                          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: _getStatusColor(job['status']),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            '${job['status']?.toUpperCase() ?? 'UNKNOWN'}',
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      if (trailing != null) trailing!,
+                    ],
                   ),
                 ],
               ),
@@ -66,23 +73,23 @@ class JobCard extends StatelessWidget {
                   Text(' ${_formatDate(job['createdAt'])}'),
                 ],
               ),
-              if (showStatus || trailing != null) ...[
-                SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    if (showStatus)
-                      Text(
-                        'Status: ${job['status']?.toUpperCase() ?? 'UNKNOWN'}',
-                        style: TextStyle(
-                          color: _getStatusColor(job['status']),
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    if (trailing != null) trailing!,
-                  ],
-                ),
-              ],
+              SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.green,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      'HK\$${job['hourlyRate']}/hr',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
