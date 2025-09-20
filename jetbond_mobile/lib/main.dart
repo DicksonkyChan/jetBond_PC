@@ -778,13 +778,24 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
     super.dispose();
   }
 
+  String _getStatusText(String? status) {
+    if (status == null) return 'NO STATUS';
+    switch (status.toLowerCase()) {
+      case 'matching': return 'MATCHING';
+      case 'assigned': return 'ASSIGNED';
+      case 'completed': return 'COMPLETED';
+      case 'cancelled': return 'CANCELLED';
+      case 'expired': return 'EXPIRED';
+      default: return 'UNKNOWN ($status)';
+    }
+  }
+
   Future<void> _loadMyJobs() async {
     setState(() => isLoading = true);
     try {
       final data = await ApiService.get('/jobs?employerId=${UserService.currentUserId}');
       final allJobs = data is List ? List<dynamic>.from(data) : [];
       setState(() {
-        // Only show jobs that are still looking for employees (matching status)
         myJobs = allJobs.where((job) => job['status'] == 'matching').toList();
         isLoading = false;
       });
@@ -1084,7 +1095,7 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
                                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                       children: [
                                         Text(
-                                          'Status: ${job['status']?.toUpperCase() ?? 'UNKNOWN'}',
+                                          'Status: ${_getStatusText(job['status'])}',
                                           style: TextStyle(
                                             color: _getStatusColor(job['status']),
                                             fontWeight: FontWeight.bold,

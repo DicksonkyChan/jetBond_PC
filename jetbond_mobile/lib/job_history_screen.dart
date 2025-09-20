@@ -72,6 +72,7 @@ class _JobHistoryScreenState extends State<JobHistoryScreen> {
     switch (status) {
       case 'matching': return Colors.green;
       case 'assigned': return Colors.blue;
+      case 'completed': return Colors.purple;
       case 'cancelled': return Colors.red;
       case 'expired': return Colors.orange;
       default: return Colors.grey;
@@ -82,6 +83,7 @@ class _JobHistoryScreenState extends State<JobHistoryScreen> {
     switch (status) {
       case 'matching': return Icons.search;
       case 'assigned': return Icons.check_circle;
+      case 'completed': return Icons.done_all;
       case 'cancelled': return Icons.cancel;
       case 'expired': return Icons.access_time;
       default: return Icons.help;
@@ -92,6 +94,7 @@ class _JobHistoryScreenState extends State<JobHistoryScreen> {
     switch (status) {
       case 'matching': return 'Active';
       case 'assigned': return 'Hired Successfully';
+      case 'completed': return 'Completed';
       case 'cancelled': return 'Cancelled';
       case 'expired': return 'Expired';
       default: return 'Unknown';
