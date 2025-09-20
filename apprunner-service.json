@@ -1,0 +1,26 @@
+{
+  "ServiceName": "jetbond-api",
+  "SourceConfiguration": {
+    "ImageRepository": {
+      "ImageIdentifier": "377848414329.dkr.ecr.ap-southeast-1.amazonaws.com/jetbond-api:latest",
+      "ImageConfiguration": {
+        "Port": "3000",
+        "RuntimeEnvironmentVariables": {
+          "PORT": "3000",
+          "DYNAMODB_USERS_TABLE": "jetbond-users-dev",
+          "DYNAMODB_JOBS_TABLE": "jetbond-jobs-dev",
+          "DYNAMODB_MATCHES_TABLE": "jetbond-matches-dev"
+        }
+      },
+      "ImageRepositoryType": "ECR"
+    },
+    "AuthenticationConfiguration": {
+      "AccessRoleArn": "arn:aws:iam::377848414329:role/AppRunnerECRAccessRole"
+    },
+    "AutoDeploymentsEnabled": false
+  },
+  "InstanceConfiguration": {
+    "Cpu": "0.25 vCPU",
+    "Memory": "0.5 GB"
+  }
+}

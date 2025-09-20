@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JetBond API Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; }
+        .btn { background: #4CAF50; color: white; padding: 15px 30px; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; margin: 10px; display: block; width: 100%; }
+        .btn:hover { background: #45a049; }
+        .btn-blue { background: #2196F3; }
+        .btn-orange { background: #FF9800; }
+        h1 { color: #2196F3; text-align: center; }
+        .result { background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>🚀 JetBond API Test</h1>
+    
+    <button class="btn" onclick="testAlert()">Test Alert</button>
+    <button class="btn btn-blue" onclick="testGetJobs()">Test API (Get Jobs)</button>
+    <button class="btn btn-orange" onclick="testPostJob()">Test Post Job</button>
+    
+    <div id="result" class="result" style="display: none;"></div>
+
+    <script>
+        const API_BASE_URL = 'https://xaifmm3kga.ap-southeast-1.awsapprunner.com';
+        
+        function showResult(message) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = message;
+            resultDiv.style.display = 'block';
+        }
+        
+        function testAlert() {
+            console.log('Alert test clicked!');
+            alert('Success! Button works perfectly!');
+            showResult('✅ Alert test passed!');
+        }
+        
+        async function testGetJobs() {
+            try {
+                console.log('Testing GET /jobs...');
+                showResult('🔄 Loading jobs...');
+                
+                const response = await fetch(`${API_BASE_URL}/jobs`);
+                const jobs = await response.json();
+                
+                console.log('Jobs loaded:', jobs);
+                showResult(`✅ API Success! Found ${jobs.length} jobs:<br><pre>${JSON.stringify(jobs, null, 2)}</pre>`);
+            } catch (error) {
+                console.error('API Error:', error);
+                showResult(`❌ API Error: ${error.message}`);
+            }
+        }
+        
+        async function testPostJob() {
+            try {
+                console.log('Testing POST /jobs...');
+                showResult('🔄 Posting job...');
+                
+                const jobData = {
+                    title: 'Web Test Job',
+                    description: 'Testing API from web interface',
+                    district: 'Central',
+                    hourlyRate: 200,
+                    duration: 2,
+                    employerId: 'web-test-employer'
+                };
+                
+                const response = await fetch(`${API_BASE_URL}/jobs`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(jobData)
+                });
+                
+                const result = await response.json();
+                console.log('Job posted:', result);
+                showResult(`✅ Job Posted Successfully!<br>Job ID: ${result.jobId}<br><pre>${JSON.stringify(result, null, 2)}</pre>`);
+            } catch (error) {
+                console.error('Post Error:', error);
+                showResult(`❌ Post Error: ${error.message}`);
+            }
+        }
+    </script>
+</body>
+</html>

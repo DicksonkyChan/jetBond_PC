@@ -1,0 +1,24 @@
+{
+  "ServiceName": "jetbond-api-v4",
+  "SourceConfiguration": {
+    "CodeRepository": {
+      "RepositoryUrl": "https://github.com/DicksonkyChan/jetbond-app",
+      "SourceCodeVersion": {
+        "Type": "BRANCH",
+        "Value": "master"
+      },
+      "CodeConfiguration": {
+        "ConfigurationSource": "REPOSITORY"
+      }
+    },
+    "AutoDeploymentsEnabled": true,
+    "AuthenticationConfiguration": {
+      "ConnectionArn": "arn:aws:apprunner:ap-southeast-1:377848414329:connection/jetbond-github/e9615fb7d1be4c12840a7530ddba987d"
+    }
+  },
+  "InstanceConfiguration": {
+    "Cpu": "0.25 vCPU",
+    "Memory": "0.5 GB",
+    "InstanceRoleArn": "arn:aws:iam::377848414329:role/AppRunnerInstanceRole"
+  }
+}

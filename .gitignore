@@ -1,0 +1,37 @@
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Logs
+logs/
+*.log
+
+# AWS
+.aws/
+mykeys.txt
+
+# Build
+dist/
+build/
+.webpack/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary
+temp/
+tmp/

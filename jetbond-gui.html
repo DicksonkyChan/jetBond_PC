@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JetBond - Gig Marketplace</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f7fa; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 15px; margin-bottom: 30px; }
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .header p { font-size: 1.2em; opacity: 0.9; }
+        .tabs { display: flex; background: white; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 30px; }
+        .tab { flex: 1; padding: 20px; text-align: center; cursor: pointer; background: white; border: none; font-size: 16px; transition: all 0.3s; }
+        .tab.active { background: #667eea; color: white; }
+        .tab:hover { background: #f0f0f0; }
+        .tab.active:hover { background: #5a6fd8; }
+        .content { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 600; color: #333; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 12px; border: 2px solid #e1e5e9; border-radius: 8px; font-size: 16px; transition: border-color 0.3s; }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #667eea; }
+        .btn { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 30px; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: 600; transition: all 0.3s; }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3); }
+        .btn-success { background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%); }
+        .btn-warning { background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%); }
+        .btn-danger { background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%); }
+        .result { padding: 20px; border-radius: 10px; margin: 20px 0; }
+        .result.success { background: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
+        .result.error { background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
+        .result.info { background: #d1ecf1; border: 1px solid #bee5eb; color: #0c5460; }
+        .job-card { background: white; border: 1px solid #e1e5e9; border-radius: 10px; padding: 20px; margin: 15px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .job-card h3 { color: #667eea; margin-bottom: 10px; }
+        .job-card .meta { color: #666; font-size: 14px; margin-bottom: 10px; }
+        .job-card .rate { font-size: 18px; font-weight: bold; color: #4CAF50; }
+        .hidden { display: none; }
+        .notification { position: fixed; top: 20px; right: 20px; background: #4CAF50; color: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); z-index: 1000; }
+        .ws-status { position: fixed; bottom: 20px; right: 20px; padding: 10px 15px; border-radius: 20px; font-size: 14px; font-weight: 600; }
+        .ws-connected { background: #4CAF50; color: white; }
+        .ws-disconnected { background: #f44336; color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 JetBond</h1>
+            <p>Real-time Gig Marketplace Platform</p>
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('employer')">👔 Employer</button>
+            <button class="tab" onclick="showTab('employee')">👷 Employee</button>
+            <button class="tab" onclick="showTab('jobs')">📋 Jobs</button>
+            <button class="tab" onclick="showTab('test')">🧪 Test API</button>
+        </div>
+
+        <!-- Employer Tab -->
+        <div id="employer-content" class="content">
+            <h2>Employer Dashboard</h2>
+            <div class="form-group">
+                <label>Company Name</label>
+                <input type="text" id="company-name" placeholder="Enter company name">
+            </div>
+            <div class="form-group">
+                <label>Contact Email</label>
+                <input type="email" id="company-email" placeholder="Enter contact email">
+            </div>
+            <button class="btn" onclick="createEmployer()">Create Employer Profile</button>
+            
+            <hr style="margin: 30px 0;">
+            
+            <h3>Post New Job</h3>
+            <div class="form-group">
+                <label>Job Title</label>
+                <input type="text" id="job-title" placeholder="e.g., Urgent Server Needed">
+            </div>
+            <div class="form-group">
+                <label>Job Description</label>
+                <textarea id="job-description" rows="3" placeholder="Describe the job requirements..."></textarea>
+            </div>
+            <div class="form-group">
+                <label>District</label>
+                <select id="job-district">
+                    <option value="Central">Central</option>
+                    <option value="Wan Chai">Wan Chai</option>
+                    <option value="Causeway Bay">Causeway Bay</option>
+                    <option value="Tsim Sha Tsui">Tsim Sha Tsui</option>
+                    <option value="Mong Kok">Mong Kok</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Hourly Rate (HKD)</label>
+                <input type="number" id="job-rate" placeholder="100" min="50" max="500">
+            </div>
+            <div class="form-group">
+                <label>Duration (hours)</label>
+                <input type="number" id="job-duration" placeholder="4" min="1" max="12">
+            </div>
+            <button class="btn btn-success" onclick="postJob()">Post Job & Find Matches</button>
+        </div>
+
+        <!-- Employee Tab -->
+        <div id="employee-content" class="content hidden">
+            <h2>Employee Dashboard</h2>
+            <div class="form-group">
+                <label>Full Name</label>
+                <input type="text" id="employee-name" placeholder="Enter your name">
+            </div>
+            <div class="form-group">
+                <label>Experience & Skills</label>
+                <textarea id="employee-skills" rows="3" placeholder="Describe your experience and skills..."></textarea>
+            </div>
+            <div class="form-group">
+                <label>Preferred Districts</label>
+                <select id="employee-districts" multiple>
+                    <option value="Central">Central</option>
+                    <option value="Wan Chai">Wan Chai</option>
+                    <option value="Causeway Bay">Causeway Bay</option>
+                    <option value="Tsim Sha Tsui">Tsim Sha Tsui</option>
+                    <option value="Mong Kok">Mong Kok</option>
+                </select>
+                <small>Hold Ctrl to select multiple districts</small>
+            </div>
+            <div class="form-group">
+                <label>Hourly Rate Range (HKD)</label>
+                <div style="display: flex; gap: 10px;">
+                    <input type="number" id="employee-rate-min" placeholder="Min: 80" style="flex: 1;">
+                    <input type="number" id="employee-rate-max" placeholder="Max: 150" style="flex: 1;">
+                </div>
+            </div>
+            <button class="btn" onclick="createEmployee()">Create Employee Profile</button>
+        </div>
+
+        <!-- Jobs Tab -->
+        <div id="jobs-content" class="content hidden">
+            <h2>Available Jobs</h2>
+            <button class="btn btn-warning" onclick="loadJobs()">Refresh Jobs</button>
+            <div id="jobs-list"></div>
+        </div>
+
+        <!-- Test Tab -->
+        <div id="test-content" class="content hidden">
+            <h2>API Testing</h2>
+            <button class="btn" onclick="testHealth()">Test Health Check</button>
+            <button class="btn btn-success" onclick="runFullTest()">Run Full Test Suite</button>
+            <button class="btn btn-warning" onclick="connectWebSocket()">Connect WebSocket</button>
+        </div>
+
+        <div id="result"></div>
+    </div>
+
+    <div id="ws-status" class="ws-status ws-disconnected">WebSocket: Disconnected</div>
+
+    <script>
+        const API_BASE = 'http://localhost:8080';
+        let currentEmployerId = null;
+        let currentEmployeeId = null;
+        let ws = null;
+
+        function showTab(tabName) {
+            // Hide all content
+            document.querySelectorAll('.content').forEach(content => content.classList.add('hidden'));
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            
+            // Show selected content
+            document.getElementById(tabName + '-content').classList.remove('hidden');
+            event.target.classList.add('active');
+        }
+
+        function showResult(message, type = 'info') {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = message;
+            resultDiv.className = `result ${type}`;
+            resultDiv.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function showNotification(message) {
+            const notification = document.createElement('div');
+            notification.className = 'notification';
+            notification.textContent = message;
+            document.body.appendChild(notification);
+            setTimeout(() => notification.remove(), 3000);
+        }
+
+        async function createEmployer() {
+            const companyName = document.getElementById('company-name').value;
+            const email = document.getElementById('company-email').value;
+            
+            if (!companyName || !email) {
+                showResult('Please fill in all employer fields', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/users`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        profiles: {
+                            employer: {
+                                companyName: companyName,
+                                contactInfo: email
+                            }
+                        },
+                        currentMode: 'employer'
+                    })
+                });
+
+                const result = await response.json();
+                currentEmployerId = result.userId;
+                showResult(`✅ Employer profile created successfully!<br>ID: ${result.userId}`, 'success');
+                showNotification('Employer profile created!');
+            } catch (error) {
+                showResult(`❌ Error creating employer: ${error.message}`, 'error');
+            }
+        }
+
+        async function createEmployee() {
+            const name = document.getElementById('employee-name').value;
+            const skills = document.getElementById('employee-skills').value;
+            const districts = Array.from(document.getElementById('employee-districts').selectedOptions).map(o => o.value);
+            const minRate = document.getElementById('employee-rate-min').value;
+            const maxRate = document.getElementById('employee-rate-max').value;
+            
+            if (!name || !skills || districts.length === 0) {
+                showResult('Please fill in all employee fields', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/users`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        profiles: {
+                            employee: {
+                                name: name,
+                                jobDescription: skills,
+                                preferredDistricts: districts,
+                                hourlyRateRange: {
+                                    min: parseInt(minRate) || 80,
+                                    max: parseInt(maxRate) || 150
+                                }
+                            }
+                        },
+                        currentMode: 'employee'
+                    })
+                });
+
+                const result = await response.json();
+                currentEmployeeId = result.userId;
+                showResult(`✅ Employee profile created successfully!<br>ID: ${result.userId}`, 'success');
+                showNotification('Employee profile created!');
+            } catch (error) {
+                showResult(`❌ Error creating employee: ${error.message}`, 'error');
+            }
+        }
+
+        async function postJob() {
+            if (!currentEmployerId) {
+                showResult('Please create an employer profile first', 'error');
+                return;
+            }
+
+            const title = document.getElementById('job-title').value;
+            const description = document.getElementById('job-description').value;
+            const district = document.getElementById('job-district').value;
+            const rate = document.getElementById('job-rate').value;
+            const duration = document.getElementById('job-duration').value;
+
+            if (!title || !description || !rate || !duration) {
+                showResult('Please fill in all job fields', 'error');
+                return;
+            }
+
+            try {
+                // Create job
+                const jobResponse = await fetch(`${API_BASE}/jobs`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title, description, district,
+                        hourlyRate: parseInt(rate),
+                        duration: `${duration} hours`,
+                        employerId: currentEmployerId
+                    })
+                });
+
+                const job = await jobResponse.json();
+                
+                // Find matches
+                const matchResponse = await fetch(`${API_BASE}/jobs/${job.jobId}/matches`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const matches = await matchResponse.json();
+                
+                showResult(`✅ Job posted successfully!<br>Job ID: ${job.jobId}<br>Found ${matches.count} potential matches`, 'success');
+                showNotification(`Job posted! Found ${matches.count} matches`);
+            } catch (error) {
+                showResult(`❌ Error posting job: ${error.message}`, 'error');
+            }
+        }
+
+        async function loadJobs() {
+            try {
+                const response = await fetch(`${API_BASE}/jobs`);
+                const jobs = await response.json();
+                
+                const jobsList = document.getElementById('jobs-list');
+                if (jobs.length === 0) {
+                    jobsList.innerHTML = '<p>No jobs available</p>';
+                } else {
+                    jobsList.innerHTML = jobs.map(job => `
+                        <div class="job-card">
+                            <h3>${job.title}</h3>
+                            <div class="meta">📍 ${job.district} • ⏰ ${job.duration} • 📅 ${new Date(job.createdAt).toLocaleDateString()}</div>
+                            <p>${job.description}</p>
+                            <div class="rate">💰 HK$${job.hourlyRate}/hour</div>
+                            ${currentEmployeeId ? `<button class="btn" onclick="respondToJob('${job.jobId}')">Apply Now</button>` : ''}
+                        </div>
+                    `).join('');
+                }
+                
+                showResult(`✅ Loaded ${jobs.length} jobs`, 'success');
+            } catch (error) {
+                showResult(`❌ Error loading jobs: ${error.message}`, 'error');
+            }
+        }
+
+        async function respondToJob(jobId) {
+            if (!currentEmployeeId) {
+                showResult('Please create an employee profile first', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/jobs/${jobId}/respond`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ employeeId: currentEmployeeId })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    showResult(`✅ Successfully applied to job!<br>Response count: ${result.responseCount}`, 'success');
+                    showNotification('Application submitted!');
+                } else {
+                    showResult(`❌ ${result.message}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ Error applying to job: ${error.message}`, 'error');
+            }
+        }
+
+        async function testHealth() {
+            try {
+                const response = await fetch(`${API_BASE}/test`);
+                const result = await response.json();
+                showResult(`✅ Health Check: ${result.message}<br>Timestamp: ${result.timestamp}`, 'success');
+            } catch (error) {
+                showResult(`❌ Health check failed: ${error.message}`, 'error');
+            }
+        }
+
+        async function runFullTest() {
+            showResult('🔄 Running full test suite...', 'info');
+            
+            try {
+                // Test health
+                await testHealth();
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // Create test employer
+                const employerResponse = await fetch(`${API_BASE}/users`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        profiles: { employer: { companyName: 'Test Restaurant', contactInfo: 'test@test.com' }},
+                        currentMode: 'employer'
+                    })
+                });
+                const employer = await employerResponse.json();
+                
+                // Create test employee
+                const employeeResponse = await fetch(`${API_BASE}/users`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        profiles: { employee: { name: 'Test Worker', jobDescription: 'Experienced server', preferredDistricts: ['Central'] }},
+                        currentMode: 'employee'
+                    })
+                });
+                const employee = await employeeResponse.json();
+                
+                showResult(`✅ Full test suite completed successfully!<br>Employer: ${employer.userId}<br>Employee: ${employee.userId}`, 'success');
+                showNotification('Full test completed!');
+            } catch (error) {
+                showResult(`❌ Test suite failed: ${error.message}`, 'error');
+            }
+        }
+
+        function connectWebSocket() {
+            if (ws) {
+                ws.close();
+            }
+
+            ws = new WebSocket('ws://localhost:8080');
+            
+            ws.onopen = () => {
+                document.getElementById('ws-status').textContent = 'WebSocket: Connected';
+                document.getElementById('ws-status').className = 'ws-status ws-connected';
+                showNotification('WebSocket connected!');
+                
+                // Authenticate if we have a user ID
+                if (currentEmployerId || currentEmployeeId) {
+                    ws.send(JSON.stringify({
+                        type: 'auth',
+                        userId: currentEmployerId || currentEmployeeId
+                    }));
+                }
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                console.log('WebSocket message:', data);
+                
+                if (data.type === 'job_match') {
+                    showNotification(`New job match: ${data.jobTitle}`);
+                } else if (data.type === 'job_response') {
+                    showNotification(`New job response! Count: ${data.responseCount}`);
+                } else if (data.type === 'selection_result') {
+                    showNotification(data.selected ? 'You were selected!' : 'Not selected this time');
+                }
+            };
+            
+            ws.onclose = () => {
+                document.getElementById('ws-status').textContent = 'WebSocket: Disconnected';
+                document.getElementById('ws-status').className = 'ws-status ws-disconnected';
+            };
+        }
+
+        // Auto-connect WebSocket on page load
+        window.onload = () => {
+            connectWebSocket();
+        };
+    </script>
+</body>
+</html>
