@@ -80,6 +80,27 @@ app.get('/debug', (req, res) => {
   });
 });
 
+// Admin endpoint to get all data
+app.get('/admin/data', (req, res) => {
+  try {
+    const allJobs = Array.from(jobs.values());
+    const allUsers = Array.from(users.values());
+    res.json({
+      users: allUsers,
+      jobs: allJobs,
+      stats: {
+        totalUsers: allUsers.length,
+        totalJobs: allJobs.length,
+        activeJobs: allJobs.filter(j => j.status === 'matching').length,
+        completedJobs: allJobs.filter(j => j.status === 'completed').length
+      }
+    });
+  } catch (error) {
+    logToFile(`Admin data error: ${error}`);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // DynamoDB check endpoint
 app.get('/check-dynamodb', async (req, res) => {
   try {
@@ -246,7 +267,8 @@ app.post('/users', async (req, res) => {
       currentMode,
       employeeStatus: 'open_to_work',
       currentJobId: null,
-      ratings: { good: 0, neutral: 0, bad: 0 },
+      employeeRatings: { good: 0, neutral: 0, bad: 0 },
+      employerRatings: { good: 0, neutral: 0, bad: 0 },
       isActive: true,
       createdAt: new Date().toISOString()
     };
@@ -266,10 +288,32 @@ app.post('/users', async (req, res) => {
 
 app.get('/users/:id', async (req, res) => {
   try {
-    const user = users.get(req.params.id);
+    let user = users.get(req.params.id);
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      // Create default user if not found
+      user = {
+        userId: req.params.id,
+        profiles: {},
+        currentMode: 'employee',
+        employeeStatus: 'open_to_work',
+        employeeRatings: { good: 0, neutral: 0, bad: 0 },
+        employerRatings: { good: 0, neutral: 0, bad: 0 },
+        createdAt: new Date().toISOString()
+      };
+      users.set(req.params.id, user);
+      await saveUserToDynamoDB(user);
+      logToFile(`Created default user: ${req.params.id}`);
     }
+    
+    // Ensure rating fields exist
+    if (!user.employeeRatings) {
+      user.employeeRatings = { good: 0, neutral: 0, bad: 0 };
+    }
+    if (!user.employerRatings) {
+      user.employerRatings = { good: 0, neutral: 0, bad: 0 };
+    }
+    
+    logToFile(`User ${req.params.id} ratings - Employee: ${JSON.stringify(user.employeeRatings)}, Employer: ${JSON.stringify(user.employerRatings)}`);
     res.json(user);
   } catch (error) {
     logToFile(`Get user error: ${error}`);
@@ -289,7 +333,8 @@ app.put('/users/:id', async (req, res) => {
         profiles: profiles || {},
         currentMode: currentMode || 'employee',
         employeeStatus: 'open_to_work',
-        ratings: { good: 0, neutral: 0, bad: 0 },
+        employeeRatings: { good: 0, neutral: 0, bad: 0 },
+        employerRatings: { good: 0, neutral: 0, bad: 0 },
         createdAt: new Date().toISOString()
       };
     } else {
@@ -566,6 +611,12 @@ app.post('/jobs/:id/respond', async (req, res) => {
       return res.json({ success: false, message: 'Already applied to this job' });
     }
 
+    // Check if employee has canceled application before
+    const hasCanceled = job.canceledApplications && job.canceledApplications.some(c => c.employeeId === employeeId);
+    if (hasCanceled) {
+      return res.json({ success: false, message: 'Cannot reapply after canceling application' });
+    }
+
     // Set employee status to busy when applying
     employee.employeeStatus = 'busy';
     employee.currentJobId = req.params.id;
@@ -679,11 +730,68 @@ app.post('/jobs/:id/rate', async (req, res) => {
       await saveJobToDynamoDB(job);
     }
 
-    user.ratings[rating]++;
+    // Determine if rating is for employee or employer role
+    const rater = users.get(raterId);
+    if (rater && rater.currentMode === 'employer') {
+      user.employeeRatings[rating]++;
+    } else {
+      user.employerRatings[rating]++;
+    }
     await saveUserToDynamoDB(user);
     res.json({ success: true, message: 'Rating submitted successfully' });
   } catch (error) {
     logToFile(`Rating error: ${error}`);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Cancel application endpoint
+app.post('/jobs/:id/cancel-application', async (req, res) => {
+  try {
+    const { employeeId } = req.body;
+    if (!employeeId) {
+      return res.status(400).json({ error: 'Missing employeeId' });
+    }
+
+    const job = jobs.get(req.params.id);
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    const employee = users.get(employeeId);
+    if (!employee) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
+
+    // Initialize canceledApplications if not exists
+    if (!job.canceledApplications) {
+      job.canceledApplications = [];
+    }
+
+    // Add to canceled applications list
+    job.canceledApplications.push({
+      employeeId,
+      canceledAt: new Date().toISOString()
+    });
+
+    // Remove employee from job responses
+    if (job.matchingWindow && job.matchingWindow.responses) {
+      job.matchingWindow.responses = job.matchingWindow.responses.filter(
+        response => response.employeeId !== employeeId
+      );
+    }
+    
+    await saveJobToDynamoDB(job);
+
+    // Reset employee status
+    employee.employeeStatus = 'open_to_work';
+    employee.currentJobId = null;
+    await saveUserToDynamoDB(employee);
+
+    logToFile(`Employee ${employeeId} cancelled application for job ${req.params.id}`);
+    res.json({ success: true, message: 'Application cancelled successfully' });
+  } catch (error) {
+    logToFile(`Cancel application error: ${error}`);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -723,7 +831,63 @@ app.put('/jobs/:id/cancel', async (req, res) => {
   }
 });
 
-// Complete job endpoint
+// Employee complete job endpoint (sets to pending)
+app.put('/jobs/:id/employee-complete', async (req, res) => {
+  try {
+    const { rating, employeeId } = req.body;
+    const job = jobs.get(req.params.id);
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    if (job.status !== 'assigned') {
+      return res.status(400).json({ error: `Job is not in assigned status. Current status: ${job.status}` });
+    }
+
+    // Set job to pending employer completion
+    job.status = 'pending';
+    job.employeeCompletedAt = new Date().toISOString();
+    
+    // Store employee's rating of employer
+    if (rating && ['good', 'neutral', 'bad'].includes(rating)) {
+      job.employeeRating = rating;
+      
+      // Update employer's overall rating
+      const employer = users.get(job.employerId);
+      if (employer) {
+        employer.employerRatings[rating]++;
+        await saveUserToDynamoDB(employer);
+      }
+    }
+    
+    await saveJobToDynamoDB(job);
+
+    // Reset employee status to open_to_work
+    const employee = users.get(employeeId);
+    if (employee) {
+      employee.employeeStatus = 'open_to_work';
+      employee.currentJobId = null;
+      await saveUserToDynamoDB(employee);
+    }
+
+    // Notify employer that job is pending their completion
+    sendNotification(job.employerId, {
+      type: 'job_pending',
+      jobId: req.params.id,
+      jobTitle: job.title,
+      message: `Job "${job.title}" completed by employee. Please review and complete.`,
+      timestamp: new Date().toISOString()
+    });
+
+    logToFile(`Job ${req.params.id} marked as pending by employee ${employeeId}`);
+    res.json({ success: true, message: 'Job marked as pending employer completion' });
+  } catch (error) {
+    logToFile(`Employee complete job error: ${error}`);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Employer complete job endpoint (final completion)
 app.put('/jobs/:id/complete', async (req, res) => {
   try {
     const { rating } = req.body;
@@ -732,9 +896,9 @@ app.put('/jobs/:id/complete', async (req, res) => {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    if (job.status !== 'assigned') {
-      logToFile(`Job ${req.params.id} has status: ${job.status}, expected: assigned`);
-      return res.status(400).json({ error: `Job is not in assigned status. Current status: ${job.status}` });
+    if (job.status !== 'assigned' && job.status !== 'pending') {
+      logToFile(`Job ${req.params.id} has status: ${job.status}, expected: assigned or pending`);
+      return res.status(400).json({ error: `Job is not in assigned or pending status. Current status: ${job.status}` });
     }
 
     // Update job status to completed
@@ -749,7 +913,7 @@ app.put('/jobs/:id/complete', async (req, res) => {
       if (job.selectedEmployeeId) {
         const employee = users.get(job.selectedEmployeeId);
         if (employee) {
-          employee.ratings[rating]++;
+          employee.employeeRatings[rating]++;
           await saveUserToDynamoDB(employee);
         }
       }

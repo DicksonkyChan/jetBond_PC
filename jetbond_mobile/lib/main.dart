@@ -11,6 +11,8 @@ import 'utils/date_utils.dart';
 import 'services/notification_service.dart';
 import 'notifications_screen.dart';
 import 'job_management_screen.dart';
+import 'widgets/app_navigation_bar.dart';
+import 'admin_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -41,6 +43,7 @@ class JetBondApp extends StatelessWidget {
         '/employee-work-history': (context) => EmployeeWorkHistoryScreen(employeeId: UserService.currentUserId ?? ''),
         '/notifications': (context) => NotificationsScreen(),
         '/job-management': (context) => JobManagementScreen(),
+        '/admin': (context) => AdminScreen(),
       },
     );
   }
@@ -234,6 +237,11 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ),
                           ),
                         ),
+                        SizedBox(height: 16),
+                        TextButton(
+                          onPressed: () => Navigator.pushNamed(context, '/admin'),
+                          child: Text('🔧 Admin Panel', style: TextStyle(color: Colors.grey)),
+                        ),
                       ],
                     ),
                   ),
@@ -257,7 +265,8 @@ class EmployeeDashboard extends StatefulWidget {
 class _EmployeeDashboardState extends State<EmployeeDashboard> {
   List<dynamic> jobs = [];
   List<dynamic> myApplications = [];
-  Set<String> appliedJobs = {};
+  late Set<String> appliedJobs;
+  late Set<String> canceledApplications;
   String? activeApplicationJobId;
   Map<String, dynamic>? currentJob;
   bool isLoading = false;
@@ -266,6 +275,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   @override
   void initState() {
     super.initState();
+    appliedJobs = <String>{};
+    canceledApplications = <String>{};
     _loadJobs();
     _startAutoRefresh();
     NotificationService.addListener(_onNotification);
@@ -300,6 +311,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     try {
       final data = await ApiService.get('/jobs');
       await _loadCurrentJob();
+      await _loadCanceledApplications();
       setState(() {
         jobs = data is List ? List<dynamic>.from(data) : [];
         isLoading = false;
@@ -322,9 +334,22 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
           currentJob = data['job'];
         });
       } else {
-        setState(() {
-          currentJob = null;
-        });
+        // Also check for pending jobs
+        final allJobsResponse = await http.get(Uri.parse('http://localhost:8080/jobs'));
+        if (allJobsResponse.statusCode == 200) {
+          final allJobs = json.decode(allJobsResponse.body) as List;
+          final pendingJob = allJobs.firstWhere(
+            (job) => job['selectedEmployeeId'] == UserService.currentUserId && job['status'] == 'pending',
+            orElse: () => null,
+          );
+          setState(() {
+            currentJob = pendingJob;
+          });
+        } else {
+          setState(() {
+            currentJob = null;
+          });
+        }
       }
     } catch (e) {
       setState(() {
@@ -388,20 +413,14 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     );
   }
 
+
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text('👷 Employee Dashboard'),
         actions: [
-          IconButton(
-            icon: Icon(Icons.notifications),
-            onPressed: () => Navigator.pushNamed(context, '/notifications'),
-          ),
-          IconButton(
-            icon: Icon(Icons.history),
-            onPressed: () => Navigator.pushNamed(context, '/employee-work-history'),
-          ),
           PopupMenuButton<String>(
             icon: Icon(_getStatusIcon()),
             onSelected: activeApplicationJobId != null ? null : (status) => _updateEmployeeStatus(status),
@@ -438,27 +457,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
               UserService.currentUserType = 'employer';
               Navigator.pushReplacementNamed(context, '/employer-dashboard');
             },
-          ),
-          IconButton(
-            icon: Icon(Icons.person),
-            onPressed: () async {
-              final result = await Navigator.pushNamed(context, '/profile');
-              if (result == true) {
-                setState(() {}); // Force rebuild when profile is updated
-                print('Employee Dashboard refreshed - Profile completed: ${UserService.profileCompleted}');
-              }
-            },
-          ),
-          IconButton(
-            icon: Icon(Icons.refresh),
-            onPressed: _loadJobs,
-          ),
-          IconButton(
-            icon: Icon(Icons.logout),
-            onPressed: () {
-              UserService.logout();
-              Navigator.pushReplacementNamed(context, '/');
-            },
+            tooltip: 'Switch to Employer',
           ),
         ],
       ),
@@ -502,9 +501,27 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                               ],
                             ),
                             SizedBox(height: 4),
-                            Text(
-                              'Status: IN PROGRESS',
-                              style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 12),
+                            Column(
+                              children: [
+                                Text(
+                                  currentJob!['status'] == 'pending' ? 'Status: PENDING EMPLOYER REVIEW' : 'Status: IN PROGRESS',
+                                  style: TextStyle(
+                                    color: currentJob!['status'] == 'pending' ? Colors.blue : Colors.orange, 
+                                    fontWeight: FontWeight.bold, 
+                                    fontSize: 12
+                                  ),
+                                ),
+                                SizedBox(height: 8),
+                                if (currentJob!['status'] != 'pending')
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: ElevatedButton(
+                                      onPressed: () => _completeCurrentJob(currentJob!['jobId'], currentJob!['employerId']),
+                                      style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                                      child: Text('Complete Job', style: TextStyle(color: Colors.white, fontSize: 12)),
+                                    ),
+                                  ),
+                              ],
                             ),
                           ],
                         ),
@@ -531,6 +548,26 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                   Text(
                     'Profile: ${UserService.profileCompleted ? "✅ Complete" : "❌ Incomplete"}',
                     style: TextStyle(color: UserService.profileCompleted ? Colors.green : Colors.red),
+                  ),
+                  FutureBuilder<Map<String, int>>(
+                    future: _getEmployeeRating(),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return Text('Loading ratings...', style: TextStyle(color: Colors.grey[600]));
+                      }
+                      if (snapshot.hasError) {
+                        return Text('Error loading ratings', style: TextStyle(color: Colors.red));
+                      }
+                      if (snapshot.hasData) {
+                        final ratings = snapshot.data!;
+                        final total = ratings['good']! + ratings['neutral']! + ratings['bad']!;
+                        return Text(
+                          'Employee Rating: ${total > 0 ? "👍${ratings['good']} 👌${ratings['neutral']} 👎${ratings['bad']}" : "No ratings yet"}',
+                          style: TextStyle(color: Colors.grey[600]),
+                        );
+                      }
+                      return Text('No ratings yet', style: TextStyle(color: Colors.grey[600]));
+                    },
                   ),
                 ],
               ),
@@ -632,14 +669,45 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                                               fontWeight: FontWeight.bold,
                                             ),
                                           ),
-                                          ElevatedButton(
-                                            onPressed: _canApplyToJob(job),
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: appliedJobs.contains(job['jobId']) ? Colors.grey : 
-                                                              (activeApplicationJobId != null && activeApplicationJobId != job['jobId']) ? Colors.orange : null,
-                                            ),
-                                            child: Text(_getButtonText(job)),
-                                          ),
+                                          () {
+                                            if (canceledApplications.contains(job['jobId'])) {
+                                              return Container(
+                                                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.grey.shade300,
+                                                  borderRadius: BorderRadius.circular(4),
+                                                ),
+                                                child: Text(
+                                                  'Application Canceled',
+                                                  style: TextStyle(
+                                                    color: Colors.grey.shade600,
+                                                    fontWeight: FontWeight.w500,
+                                                  ),
+                                                ),
+                                              );
+                                            }
+                                            
+                                            final showCancel = appliedJobs.contains(job['jobId']) && activeApplicationJobId == job['jobId'];
+                                            print('🔵 Job ${job['jobId']}: showCancel=$showCancel, applied=${appliedJobs.contains(job['jobId'])}, active=$activeApplicationJobId');
+                                            return showCancel
+                                              ? ElevatedButton(
+                                                  onPressed: () {
+                                                    print('🔴 Cancel button pressed for job: ${job['jobId']}');
+                                                    _cancelApplication(job['jobId']);
+                                                  },
+                                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                                                  child: Text('Cancel', style: TextStyle(color: Colors.white)),
+                                                )
+                                              : ElevatedButton(
+                                                  onPressed: canceledApplications.contains(job['jobId']) ? null : _canApplyToJob(job),
+                                                  style: ElevatedButton.styleFrom(
+                                                    backgroundColor: canceledApplications.contains(job['jobId']) ? Colors.grey.shade300 :
+                                                                    appliedJobs.contains(job['jobId']) ? Colors.grey : 
+                                                                    (activeApplicationJobId != null && activeApplicationJobId != job['jobId']) ? Colors.orange : null,
+                                                  ),
+                                                  child: Text(_getButtonText(job)),
+                                                );
+                                          }(),
                                         ],
                                       ),
                                     ],
@@ -653,6 +721,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
           ],
         ),
       ),
+      bottomNavigationBar: AppNavigationBar(currentIndex: 2),
     );
   }
 
@@ -685,6 +754,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     if (job['status'] != 'matching') return null;
     if (UserService.employeeStatus != 'open_to_work') return null;
     if (appliedJobs.contains(job['jobId'])) return null;
+    if (canceledApplications.contains(job['jobId'])) return null;
     return () => _applyToJob(job['jobId']);
   }
 
@@ -692,6 +762,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     if (UserService.currentUserId == null) return 'Login First';
     if (job['status'] != 'matching') return 'Not Available';
     if (UserService.employeeStatus == 'not_available') return 'Not Available';
+    if (canceledApplications.contains(job['jobId'])) return 'Application Canceled';
     if (appliedJobs.contains(job['jobId'])) return 'Applied';
     if (UserService.employeeStatus == 'busy') return 'Busy';
     return 'Apply Now';
@@ -742,6 +813,140 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     }
   }
 
+  Future<void> _completeCurrentJob(String jobId, String employerId) async {
+    String? selectedRating;
+    
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Rate Employer'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('How was working with this employer?'),
+            SizedBox(height: 16),
+            ...['good', 'neutral', 'bad'].map((rating) => 
+              ListTile(
+                title: Text(_getRatingText(rating)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _submitEmployerRating(jobId, employerId, rating);
+                },
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _submitEmployerRating(String jobId, String employerId, String rating) async {
+    try {
+      await http.put(
+        Uri.parse('http://localhost:8080/jobs/$jobId/employee-complete'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'rating': rating,
+          'employeeId': UserService.currentUserId,
+        }),
+      );
+      _showSnackBar('✅ Job submitted for employer review');
+      _loadJobs(); // Refresh to update current job status
+    } catch (e) {
+      _showSnackBar('Error completing job: $e');
+    }
+  }
+
+  String _getRatingText(String rating) {
+    switch (rating) {
+      case 'good': return '👍 Good Experience';
+      case 'neutral': return '👌 Average Experience';
+      case 'bad': return '👎 Poor Experience';
+      default: return rating;
+    }
+  }
+
+  Future<void> _cancelApplication(String jobId) async {
+    print('🔴 Cancel application called for job: $jobId');
+    print('🔴 Current user: ${UserService.currentUserId}');
+    print('🔴 Active application: $activeApplicationJobId');
+    print('🔴 Applied jobs: $appliedJobs');
+    
+    try {
+      final response = await http.post(
+        Uri.parse('http://localhost:8080/jobs/$jobId/cancel-application'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'employeeId': UserService.currentUserId}),
+      );
+
+      print('🔴 Cancel response: ${response.statusCode}');
+      print('🔴 Cancel body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        UserService.setEmployeeStatus('open_to_work');
+        setState(() {
+          activeApplicationJobId = null;
+          appliedJobs.remove(jobId);
+          canceledApplications.add(jobId);
+          currentJob = null;
+        });
+        _showSnackBar('✅ Application cancelled. Status reset to open to work.');
+        _loadJobs(); // Refresh jobs list
+      } else {
+        _showSnackBar('Failed to cancel application: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('🔴 Cancel error: $e');
+      _showSnackBar('Error cancelling application: $e');
+    }
+  }
+
+  Future<void> _loadCanceledApplications() async {
+    try {
+      final response = await http.get(Uri.parse('http://localhost:8080/jobs'));
+      if (response.statusCode == 200) {
+        final allJobs = json.decode(response.body) as List;
+        canceledApplications.clear();
+        for (final job in allJobs) {
+          final canceled = job['canceledApplications'] as List?;
+          if (canceled != null) {
+            for (final canceledApp in canceled) {
+              if (canceledApp['employeeId'] == UserService.currentUserId) {
+                canceledApplications.add(job['jobId']);
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      print('Error loading canceled applications: $e');
+    }
+  }
+
+  Future<Map<String, int>> _getEmployeeRating() async {
+    try {
+      final response = await http.get(Uri.parse('http://localhost:8080/users/${UserService.currentUserId}'));
+      if (response.statusCode == 200) {
+        final userData = json.decode(response.body);
+        final ratings = userData['employeeRatings'] ?? {'good': 0, 'neutral': 0, 'bad': 0};
+        return {
+          'good': (ratings['good'] as num?)?.toInt() ?? 0,
+          'neutral': (ratings['neutral'] as num?)?.toInt() ?? 0,
+          'bad': (ratings['bad'] as num?)?.toInt() ?? 0,
+        };
+      }
+    } catch (e) {
+      print('Error getting employee rating: $e');
+    }
+    return {'good': 0, 'neutral': 0, 'bad': 0};
+  }
+
 }
 
 class EmployerDashboard extends StatefulWidget {
@@ -754,7 +959,7 @@ class EmployerDashboard extends StatefulWidget {
 class _EmployerDashboardState extends State<EmployerDashboard> {
   List<dynamic> myJobs = [];
   bool isLoading = false;
-  Set<String> expandedJobs = {};
+  Set<String> expandedJobs = <String>{};
 
   @override
   void initState() {
@@ -783,6 +988,7 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
     switch (status.toLowerCase()) {
       case 'matching': return 'MATCHING';
       case 'assigned': return 'ASSIGNED';
+      case 'pending': return 'PENDING COMPLETION';
       case 'completed': return 'COMPLETED';
       case 'cancelled': return 'CANCELLED';
       case 'expired': return 'EXPIRED';
@@ -796,7 +1002,7 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
       final data = await ApiService.get('/jobs?employerId=${UserService.currentUserId}');
       final allJobs = data is List ? List<dynamic>.from(data) : [];
       setState(() {
-        myJobs = allJobs.where((job) => job['status'] == 'matching').toList();
+        myJobs = allJobs.where((job) => job['status'] == 'matching' || job['status'] == 'pending').toList();
         isLoading = false;
       });
     } catch (e) {
@@ -948,16 +1154,8 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
         title: Text('👔 Employer Dashboard'),
         actions: [
           IconButton(
-            icon: Icon(Icons.notifications),
-            onPressed: () => Navigator.pushNamed(context, '/notifications'),
-          ),
-          IconButton(
-            icon: Icon(Icons.manage_accounts),
-            onPressed: () => Navigator.pushNamed(context, '/job-management'),
-          ),
-          IconButton(
-            icon: Icon(Icons.history),
-            onPressed: () => Navigator.pushNamed(context, '/job-history'),
+            icon: Icon(Icons.refresh),
+            onPressed: _loadMyJobs,
           ),
           IconButton(
             icon: Icon(Icons.swap_horiz),
@@ -965,27 +1163,7 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
               UserService.currentUserType = 'employee';
               Navigator.pushReplacementNamed(context, '/employee-dashboard');
             },
-          ),
-          IconButton(
-            icon: Icon(Icons.person),
-            onPressed: () async {
-              final result = await Navigator.pushNamed(context, '/profile');
-              if (result == true) {
-                setState(() {}); // Force rebuild when profile is updated
-                print('Employer Dashboard refreshed - Profile completed: ${UserService.profileCompleted}');
-              }
-            },
-          ),
-          IconButton(
-            icon: Icon(Icons.refresh),
-            onPressed: _loadMyJobs,
-          ),
-          IconButton(
-            icon: Icon(Icons.logout),
-            onPressed: () {
-              UserService.logout();
-              Navigator.pushReplacementNamed(context, '/');
-            },
+            tooltip: 'Switch to Employee',
           ),
         ],
       ),
@@ -1010,6 +1188,26 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
                   Text(
                     'Profile: ${UserService.profileCompleted ? "✅ Complete" : "❌ Incomplete"}',
                     style: TextStyle(color: UserService.profileCompleted ? Colors.green : Colors.red),
+                  ),
+                  FutureBuilder<Map<String, int>>(
+                    future: _getEmployerRating(),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return Text('Loading ratings...', style: TextStyle(color: Colors.grey[600]));
+                      }
+                      if (snapshot.hasError) {
+                        return Text('Error loading ratings', style: TextStyle(color: Colors.red));
+                      }
+                      if (snapshot.hasData) {
+                        final ratings = snapshot.data!;
+                        final total = ratings['good']! + ratings['neutral']! + ratings['bad']!;
+                        return Text(
+                          'Employer Rating: ${total > 0 ? "👍${ratings['good']} 👌${ratings['neutral']} 👎${ratings['bad']}" : "No ratings yet"}',
+                          style: TextStyle(color: Colors.grey[600]),
+                        );
+                      }
+                      return Text('No ratings yet', style: TextStyle(color: Colors.grey[600]));
+                    },
                   ),
                 ],
               ),
@@ -1103,25 +1301,36 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
                                         ),
                                         Row(
                                           children: [
-                                            if (responseCount > 0)
-                                              GestureDetector(
-                                                onTap: () => _viewApplicants(job['jobId']),
-                                                child: Container(
-                                                  padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.orange,
-                                                    borderRadius: BorderRadius.circular(20),
-                                                  ),
-                                                  child: Text(
-                                                    '$responseCount Applicants',
-                                                    style: TextStyle(
-                                                      color: Colors.white,
-                                                      fontWeight: FontWeight.bold,
+                                            if (job['status'] == 'pending')
+                                              ElevatedButton(
+                                                onPressed: () => _completeJob(job['jobId']),
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor: Colors.green,
+                                                ),
+                                                child: Text(
+                                                  'Complete Job',
+                                                  style: TextStyle(color: Colors.white),
+                                                ),
+                                              ),
+                                            if (job['status'] == 'matching') ...[
+                                              if (responseCount > 0)
+                                                GestureDetector(
+                                                  onTap: () => _viewApplicants(job['jobId']),
+                                                  child: Container(
+                                                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.orange,
+                                                      borderRadius: BorderRadius.circular(20),
+                                                    ),
+                                                    child: Text(
+                                                      '$responseCount Applicants',
+                                                      style: TextStyle(
+                                                        color: Colors.white,
+                                                        fontWeight: FontWeight.bold,
+                                                      ),
                                                     ),
                                                   ),
                                                 ),
-                                              ),
-                                            if (job['status'] == 'matching')
                                               Padding(
                                                 padding: EdgeInsets.only(left: 8),
                                                 child: ElevatedButton(
@@ -1135,6 +1344,7 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
                                                   ),
                                                 ),
                                               ),
+                                            ],
                                           ],
                                         ),
                                       ],
@@ -1154,6 +1364,7 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
         label: Text('Post Job'),
         icon: Icon(Icons.add),
       ),
+      bottomNavigationBar: EmployerNavigationBar(currentIndex: 2),
     );
   }
 
@@ -1170,6 +1381,85 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
       default:
         return Colors.grey;
     }
+  }
+
+  Future<void> _completeJob(String jobId) async {
+    String? selectedRating;
+    
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Complete Job & Rate Employee'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('How was working with this employee?'),
+            SizedBox(height: 16),
+            ...['good', 'neutral', 'bad'].map((rating) => 
+              ListTile(
+                title: Text(_getRatingText(rating)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _submitJobCompletion(jobId, rating);
+                },
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _submitJobCompletion(String jobId, String rating) async {
+    try {
+      final response = await http.put(
+        Uri.parse('http://localhost:8080/jobs/$jobId/complete'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'rating': rating}),
+      );
+      
+      if (response.statusCode == 200) {
+        _showSnackBar('✅ Job completed and employee rated');
+        _loadMyJobs();
+      } else {
+        _showSnackBar('Failed to complete job');
+      }
+    } catch (e) {
+      _showSnackBar('Error completing job: $e');
+    }
+  }
+
+  String _getRatingText(String rating) {
+    switch (rating) {
+      case 'good': return '👍 Good Performance';
+      case 'neutral': return '👌 Average Performance';
+      case 'bad': return '👎 Poor Performance';
+      default: return rating;
+    }
+  }
+
+  Future<Map<String, int>> _getEmployerRating() async {
+    try {
+      final response = await http.get(Uri.parse('http://localhost:8080/users/${UserService.currentUserId}'));
+      if (response.statusCode == 200) {
+        final userData = json.decode(response.body);
+        final ratings = userData['employerRatings'] ?? {'good': 0, 'neutral': 0, 'bad': 0};
+        return {
+          'good': (ratings['good'] as num?)?.toInt() ?? 0,
+          'neutral': (ratings['neutral'] as num?)?.toInt() ?? 0,
+          'bad': (ratings['bad'] as num?)?.toInt() ?? 0,
+        };
+      }
+    } catch (e) {
+      print('Error getting employer rating: $e');
+    }
+    return {'good': 0, 'neutral': 0, 'bad': 0};
   }
 }
 
@@ -1259,6 +1549,7 @@ class _PostJobScreenState extends State<PostJobScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text('Post New Job'),
+        automaticallyImplyLeading: false,
       ),
       body: Padding(
         padding: EdgeInsets.all(16.0),
@@ -1411,6 +1702,7 @@ class _PostJobScreenState extends State<PostJobScreen> {
           ],
         ),
       ),
+      bottomNavigationBar: EmployerNavigationBar(currentIndex: 2),
     );
   }
 }
@@ -1564,6 +1856,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     return Scaffold(
       appBar: AppBar(
         title: Text('Edit Profile'),
+        automaticallyImplyLeading: false,
         bottom: TabBar(
           controller: _tabController,
           tabs: [
@@ -1646,6 +1939,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
           ),
         ],
       ),
+      bottomNavigationBar: AppNavigationBar(currentIndex: 3),
     );
   }
   
@@ -1789,6 +2083,7 @@ class JobDetailScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: Text('Job Details'),
+        automaticallyImplyLeading: false,
       ),
       body: Padding(
         padding: EdgeInsets.all(16.0),
@@ -1812,6 +2107,7 @@ class JobDetailScreen extends StatelessWidget {
           ],
         ),
       ),
+      bottomNavigationBar: AppNavigationBar(currentIndex: 0),
     );
   }
 }

@@ -108,6 +108,10 @@ class NotificationService {
         return '❌ Job cancelled: ${notification['jobTitle']}';
       case 'job_completed':
         return '✅ Job completed: ${notification['jobTitle']}';
+      case 'job_pending':
+        return '⏳ Job pending review: ${notification['jobTitle']}';
+      case 'job_updated':
+        return '📝 Job updated: ${notification['jobTitle']} (${notification['updatedFields']?.join(', ') ?? 'details changed'})';
       case 'status_reset':
         return '🔄 ${notification['message']}';
       case 'auth_success':
@@ -129,6 +133,10 @@ class NotificationService {
         return Colors.red;
       case 'job_completed':
         return Colors.green;
+      case 'job_pending':
+        return Colors.orange;
+      case 'job_updated':
+        return Colors.purple;
       case 'status_reset':
         return Colors.grey;
       case 'auth_success':

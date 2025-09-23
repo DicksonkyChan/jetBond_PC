@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'services/notification_service.dart';
 import 'utils/date_utils.dart';
+import 'main.dart';
+import 'widgets/app_navigation_bar.dart';
 
 class NotificationsScreen extends StatefulWidget {
   @override
@@ -40,6 +42,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text('🔔 Notifications'),
+        automaticallyImplyLeading: false,
         actions: [
           IconButton(
             icon: Icon(Icons.refresh),
@@ -91,6 +94,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 );
               },
             ),
+      bottomNavigationBar: AppNavigationBar(currentIndex: 0),
     );
   }
 

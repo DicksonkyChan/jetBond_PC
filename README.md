@@ -69,7 +69,12 @@ jetBond_PC/
 1. ✅ ~~Test complete job application flow~~
 2. ✅ ~~Add rating system~~
 3. ✅ ~~Implement work history~~
-4. Enhance WebSocket notifications
-5. Improve matching algorithm
-6. Add database persistence
-7. Add employee profile ratings display
+4. **Job State Machine & Rule Engine**
+   - Centralized job status configuration
+   - State transition validation
+   - Rule-based workflow engine
+   - Audit trail for status changes
+5. Enhance WebSocket notifications
+6. Improve matching algorithm
+7. Add database persistence
+8. Add employee profile ratings display

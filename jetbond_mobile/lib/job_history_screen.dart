@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'utils/logger.dart';
 import 'main.dart';
+import 'widgets/app_navigation_bar.dart';
 
 class JobHistoryScreen extends StatefulWidget {
   const JobHistoryScreen({super.key});
@@ -383,6 +384,7 @@ class _JobHistoryScreenState extends State<JobHistoryScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text('📋 Job History'),
+        automaticallyImplyLeading: false,
         actions: [
           IconButton(
             icon: Icon(Icons.refresh),
@@ -477,6 +479,7 @@ class _JobHistoryScreenState extends State<JobHistoryScreen> {
           ],
         ),
       ),
+      bottomNavigationBar: AppNavigationBar(currentIndex: 1),
     );
   }
 }

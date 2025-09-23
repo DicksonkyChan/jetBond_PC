@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'services/notification_service.dart';
 import 'main.dart';
+import 'widgets/app_navigation_bar.dart';
 
 class JobManagementScreen extends StatefulWidget {
   @override
@@ -134,6 +135,7 @@ class _JobManagementScreenState extends State<JobManagementScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text('👥 Job Management'),
+        automaticallyImplyLeading: false,
         actions: [
           IconButton(
             icon: Icon(Icons.refresh),
@@ -260,6 +262,7 @@ class _JobManagementScreenState extends State<JobManagementScreen> {
                     );
                   },
                 ),
+      bottomNavigationBar: EmployerNavigationBar(currentIndex: 1),
     );
   }
 

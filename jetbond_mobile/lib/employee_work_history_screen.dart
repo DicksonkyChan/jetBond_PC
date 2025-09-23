@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'services/api_service.dart';
 import 'widgets/job_card.dart';
 import 'utils/date_utils.dart' as AppDateUtils;
+import 'widgets/app_navigation_bar.dart';
 
 class EmployeeWorkHistoryScreen extends StatefulWidget {
   final String employeeId;
@@ -175,6 +176,7 @@ class _EmployeeWorkHistoryScreenState extends State<EmployeeWorkHistoryScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text('📋 Work History'),
+        automaticallyImplyLeading: false,
       ),
       body: RefreshIndicator(
         onRefresh: _loadWorkHistory,
@@ -304,6 +306,7 @@ class _EmployeeWorkHistoryScreenState extends State<EmployeeWorkHistoryScreen> {
           ],
         ),
       ),
+      bottomNavigationBar: AppNavigationBar(currentIndex: 1),
     );
   }
 }
