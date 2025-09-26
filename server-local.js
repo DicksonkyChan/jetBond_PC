@@ -72,12 +72,47 @@ app.get('/test', (req, res) => {
 app.get('/debug', (req, res) => {
   const allJobs = Array.from(jobs.values());
   const allUsers = Array.from(users.values());
+  const connectedClients = Array.from(clients.keys());
   res.json({ 
     jobs: allJobs.length,
     users: allUsers.length,
+    connectedClients: connectedClients.length,
     jobsList: allJobs,
-    usersList: allUsers.map(u => ({ userId: u.userId, currentMode: u.currentMode }))
+    usersList: allUsers.map(u => ({ userId: u.userId, currentMode: u.currentMode })),
+    clientsList: connectedClients
   });
+});
+
+// WebSocket debug endpoint
+app.get('/debug/websockets', (req, res) => {
+  const connectedClients = Array.from(clients.entries()).map(([userId, ws]) => ({
+    userId,
+    readyState: ws.readyState,
+    readyStateText: ws.readyState === WebSocket.OPEN ? 'OPEN' : 
+                   ws.readyState === WebSocket.CONNECTING ? 'CONNECTING' :
+                   ws.readyState === WebSocket.CLOSING ? 'CLOSING' : 'CLOSED'
+  }));
+  
+  res.json({
+    totalConnections: clients.size,
+    connections: connectedClients
+  });
+});
+
+// Test notification endpoint
+app.post('/debug/test-notification', (req, res) => {
+  const { userId, type, message } = req.body;
+  if (!userId || !type) {
+    return res.status(400).json({ error: 'Missing userId or type' });
+  }
+  
+  const success = sendNotification(userId, {
+    type,
+    message: message || 'Test notification',
+    timestamp: new Date().toISOString()
+  });
+  
+  res.json({ success, sent: success });
 });
 
 // Admin endpoint to get all data
@@ -191,10 +226,12 @@ wss.on('connection', (ws, req) => {
 function sendNotification(userId, notification) {
   const client = clients.get(userId);
   if (client && client.readyState === WebSocket.OPEN) {
-    logToFile(`📢 Sending notification to ${userId}: ${notification.type}`);
+    logToFile(`📢 Sending notification to ${userId}: ${notification.type} - ${notification.message || 'No message'}`);
     client.send(JSON.stringify(notification));
+    return true;
   } else {
-    logToFile(`⚠️ Cannot send notification to ${userId}: client not connected`);
+    logToFile(`⚠️ Cannot send notification to ${userId}: client not connected (readyState: ${client?.readyState || 'no client'})`);
+    return false;
   }
 }
 
@@ -387,6 +424,66 @@ app.post('/jobs', async (req, res) => {
 
     jobs.set(jobId, job);
     await saveJobToDynamoDB(job);
+    
+    logToFile(`📝 Job created: ${jobId} by ${employerId}`);
+    
+    // Notify employer that job was posted
+    sendNotification(employerId, {
+      type: 'job_posted',
+      jobId,
+      jobTitle: title,
+      message: `Job "${title}" posted successfully`,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Automatically find and notify matching employees
+    try {
+      const availableEmployees = Array.from(users.values())
+        .filter(user => user.currentMode === 'employee' && user.employeeStatus === 'open_to_work');
+
+      const matches = availableEmployees.map(employee => {
+        let score = 60; // Base score
+        const profile = employee.profiles?.employee;
+        
+        if (profile) {
+          // District match bonus
+          if (profile.preferredDistricts?.includes(district)) {
+            score += 30;
+          }
+          
+          // Rate compatibility bonus
+          const minRate = profile.hourlyRateRange?.min || 0;
+          const maxRate = profile.hourlyRateRange?.max || 999;
+          if (hourlyRate >= minRate && hourlyRate <= maxRate) {
+            score += 20;
+          }
+        }
+        
+        return {
+          employeeId: employee.userId,
+          matchScore: Math.min(score, 100),
+          matchedAt: new Date().toISOString()
+        };
+      }).slice(0, 10);
+
+      // Send job_match notifications to matched employees
+      logToFile(`📢 Auto-sending job_match notifications to ${matches.length} employees for new job ${jobId}`);
+      for (const match of matches) {
+        sendNotification(match.employeeId, {
+          type: 'job_match',
+          jobId,
+          jobTitle: title,
+          district,
+          hourlyRate,
+          matchScore: match.matchScore,
+          message: `New job match: "${title}" in ${district}`,
+          timestamp: new Date().toISOString()
+        });
+      }
+    } catch (matchError) {
+      logToFile(`⚠️ Error auto-matching for job ${jobId}: ${matchError}`);
+    }
+    
     res.status(201).json({ jobId, message: 'Job created successfully', expiresAt });
   } catch (error) {
     logToFile(`Create job error: ${error}`);
@@ -403,6 +500,15 @@ function checkExpiredJobs() {
       job.expiredAt = now.toISOString();
       saveJobToDynamoDB(job);
       logToFile(`Job ${jobId} expired at ${job.expiredAt}`);
+      
+      // Notify employer that job expired
+      sendNotification(job.employerId, {
+        type: 'job_expired',
+        jobId: job.jobId,
+        jobTitle: job.title,
+        message: `Job "${job.title}" has expired`,
+        timestamp: new Date().toISOString()
+      });
       
       // Set all applicants back to open_to_work
       resetApplicantsStatus(job, 'Job expired');
@@ -469,7 +575,7 @@ app.post('/jobs/:id/matches', async (req, res) => {
 
     // Simple matching - find available employees
     const availableEmployees = Array.from(users.values())
-      .filter(user => user.currentMode === 'employee' && user.employeeStatus === 'available');
+      .filter(user => user.currentMode === 'employee' && user.employeeStatus === 'open_to_work');
 
     const matches = availableEmployees.map(employee => {
       // Simple scoring based on district match and rate compatibility
@@ -497,7 +603,8 @@ app.post('/jobs/:id/matches', async (req, res) => {
       };
     }).slice(0, 10);
 
-    // Send notifications
+    // Send notifications to matched employees
+    logToFile(`📢 Sending job_match notifications to ${matches.length} employees for job ${req.params.id}`);
     for (const match of matches) {
       sendNotification(match.employeeId, {
         type: 'job_match',
@@ -506,6 +613,7 @@ app.post('/jobs/:id/matches', async (req, res) => {
         district: job.district,
         hourlyRate: job.hourlyRate,
         matchScore: match.matchScore,
+        message: `New job match: "${job.title}" in ${job.district}`,
         timestamp: new Date().toISOString()
       });
     }
@@ -631,13 +739,16 @@ app.post('/jobs/:id/respond', async (req, res) => {
 
     logToFile(`Employee ${employeeId} applied to job ${req.params.id}, status set to busy`);
 
-    // Notify employer
+    // Notify employer about new application
+    logToFile(`📢 Sending job_response notification to employer ${job.employerId}`);
     sendNotification(job.employerId, {
       type: 'job_response',
       jobId: req.params.id,
+      jobTitle: job.title,
       employeeId,
       responseCount: job.matchingWindow.responses.length,
       windowOpen: true,
+      message: `New application received for "${job.title}"`,
       timestamp: new Date().toISOString()
     });
 
@@ -811,14 +922,34 @@ app.put('/jobs/:id/cancel', async (req, res) => {
 
     // Notify all applicants that job was cancelled
     const responses = job.matchingWindow?.responses || [];
+    logToFile(`📢 Sending job_cancelled notifications to ${responses.length} applicants`);
     for (const response of responses) {
       sendNotification(response.employeeId, {
         type: 'job_cancelled',
         jobId: req.params.id,
         jobTitle: job.title,
-        message: 'Job has been cancelled by employer',
+        message: `Job "${job.title}" has been cancelled by employer`,
         timestamp: new Date().toISOString()
       });
+    }
+    
+    // Also notify all employees who would have been eligible for this job
+    const availableEmployees = Array.from(users.values())
+      .filter(user => user.currentMode === 'employee' && user.employeeStatus === 'open_to_work');
+    
+    logToFile(`📢 Sending job_cancelled notifications to ${availableEmployees.length} available employees`);
+    for (const employee of availableEmployees) {
+      // Don't send duplicate notifications to employees who already applied
+      const alreadyNotified = responses.some(r => r.employeeId === employee.userId);
+      if (!alreadyNotified) {
+        sendNotification(employee.userId, {
+          type: 'job_cancelled',
+          jobId: req.params.id,
+          jobTitle: job.title,
+          message: `Job "${job.title}" has been cancelled by employer`,
+          timestamp: new Date().toISOString()
+        });
+      }
     }
 
     // Set all applicants back to open_to_work

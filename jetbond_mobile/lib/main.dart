@@ -270,40 +270,54 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   String? activeApplicationJobId;
   Map<String, dynamic>? currentJob;
   bool isLoading = false;
-  Timer? _refreshTimer;
-
   @override
   void initState() {
     super.initState();
     appliedJobs = <String>{};
     canceledApplications = <String>{};
     _loadJobs();
-    _startAutoRefresh();
     NotificationService.addListener(_onNotification);
   }
 
   void _onNotification(Map<String, dynamic> notification) {
+    print('🔔 Employee received notification: $notification');
     if (mounted) {
       NotificationService.showNotificationSnackBar(context, notification);
-      if (notification['type'] == 'job_match') {
-        _loadJobs(); // Refresh jobs when new matches arrive
-      } else if (notification['type'] == 'selection_result' || notification['type'] == 'job_completed') {
-        _loadJobs(); // Refresh to update current job status
+      
+      // Handle job cancellation specifically
+      if (notification['type'] == 'job_cancelled') {
+        final cancelledJobId = notification['jobId'];
+        final hadApplied = appliedJobs.contains(cancelledJobId);
+        
+        if (hadApplied) {
+          setState(() {
+            jobs.removeWhere((job) => job['jobId'] == cancelledJobId);
+            appliedJobs.remove(cancelledJobId);
+            if (activeApplicationJobId == cancelledJobId) {
+              activeApplicationJobId = null;
+              UserService.setEmployeeStatus('open_to_work');
+            }
+          });
+        }
       }
+      
+      // Handle job completion - reset employee to open_to_work
+      if (notification['type'] == 'job_completed') {
+        setState(() {
+          activeApplicationJobId = null;
+          currentJob = null;
+          UserService.setEmployeeStatus('open_to_work');
+        });
+      }
+      
+      _loadJobs(); // Always refresh on any notification
     }
   }
 
   @override
   void dispose() {
-    _refreshTimer?.cancel();
     NotificationService.removeListener(_onNotification);
     super.dispose();
-  }
-
-  void _startAutoRefresh() {
-    _refreshTimer = Timer.periodic(Duration(seconds: 30), (timer) {
-      _loadJobs();
-    });
   }
 
   Future<void> _loadJobs() async {
@@ -542,7 +556,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                     style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                   ),
                   Text(
-                    '${jobs.length} jobs found • Auto-refresh every 30s',
+                    '${jobs.length} jobs found',
                     style: TextStyle(color: Colors.grey[600]),
                   ),
                   Text(
@@ -969,6 +983,7 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
   }
 
   void _onNotification(Map<String, dynamic> notification) {
+    print('👔 Employer received notification: $notification');
     if (mounted) {
       NotificationService.showNotificationSnackBar(context, notification);
       if (notification['type'] == 'job_response') {
@@ -1381,7 +1396,12 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
         ),
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => Navigator.pushNamed(context, '/post-job'),
+        onPressed: () async {
+          final result = await Navigator.pushNamed(context, '/post-job');
+          if (result == true) {
+            _loadMyJobs(); // Refresh jobs list after posting
+          }
+        },
         label: Text('Post Job'),
         icon: Icon(Icons.add),
       ),
@@ -1558,7 +1578,7 @@ class _PostJobScreenState extends State<PostJobScreen> {
         if (matchResponse.statusCode == 200) {
           final matches = json.decode(matchResponse.body);
           _showSnackBar('Job posted! Found ${matches['count']} potential matches');
-          Navigator.pop(context);
+          Navigator.pop(context, true);
         }
       } else {
         _showSnackBar('Failed to post job');

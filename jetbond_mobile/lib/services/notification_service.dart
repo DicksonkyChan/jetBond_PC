@@ -10,31 +10,36 @@ class NotificationService {
 
   static void connect(String userId) {
     _currentUserId = userId;
+    print('🔌 Connecting WebSocket for user: $userId');
     try {
       _channel = WebSocketChannel.connect(Uri.parse('ws://localhost:8080'));
+      print('🔌 WebSocket channel created');
       
       // Authenticate
-      _channel!.sink.add(json.encode({
+      final authMessage = json.encode({
         'type': 'auth',
         'userId': userId,
-      }));
+      });
+      print('🔌 Sending auth message: $authMessage');
+      _channel!.sink.add(authMessage);
 
       // Listen for messages
       _channel!.stream.listen(
         (message) {
+          print('📨 Received WebSocket message: $message');
           final data = json.decode(message);
           _handleNotification(data);
         },
         onError: (error) {
-          print('WebSocket error: $error');
+          print('❌ WebSocket error: $error');
         },
         onDone: () {
-          print('WebSocket connection closed');
+          print('🔌 WebSocket connection closed');
           _reconnect();
         },
       );
     } catch (e) {
-      print('WebSocket connection failed: $e');
+      print('❌ WebSocket connection failed: $e');
     }
   }
 
@@ -47,11 +52,13 @@ class NotificationService {
   }
 
   static void _handleNotification(Map<String, dynamic> data) {
+    print('🔔 Handling notification: $data');
     _notifications.insert(0, data);
     if (_notifications.length > 50) {
       _notifications.removeLast();
     }
     
+    print('🔔 Notifying ${_listeners.length} listeners');
     for (final listener in _listeners) {
       listener(data);
     }
@@ -98,6 +105,8 @@ class NotificationService {
     switch (notification['type']) {
       case 'job_match':
         return '🎯 New job match: ${notification['jobTitle']} (${notification['matchScore']}% match)';
+      case 'job_posted':
+        return '📝 New job posted: ${notification['jobTitle']}';
       case 'job_response':
         return '👤 New applicant for your job (${notification['responseCount']} total)';
       case 'selection_result':
@@ -125,6 +134,8 @@ class NotificationService {
     switch (type) {
       case 'job_match':
         return Colors.green;
+      case 'job_posted':
+        return Colors.blue;
       case 'job_response':
         return Colors.blue;
       case 'selection_result':
