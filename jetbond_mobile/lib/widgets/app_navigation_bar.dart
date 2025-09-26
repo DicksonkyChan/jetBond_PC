@@ -52,18 +52,21 @@ class EmployerNavigationBar extends StatelessWidget {
       currentIndex: currentIndex,
       items: [
         BottomNavigationBarItem(icon: Icon(Icons.notifications), label: 'Notifications'),
-        BottomNavigationBarItem(icon: Icon(Icons.manage_accounts), label: 'Manage'),
-        BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
         BottomNavigationBarItem(icon: Icon(Icons.history), label: 'History'),
+        BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
         BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
+        BottomNavigationBarItem(icon: Icon(Icons.logout), label: 'Logout'),
       ],
       onTap: (index) {
         switch (index) {
           case 0: Navigator.pushReplacementNamed(context, '/notifications'); break;
-          case 1: Navigator.pushReplacementNamed(context, '/job-management'); break;
+          case 1: Navigator.pushReplacementNamed(context, '/job-history'); break;
           case 2: Navigator.pushReplacementNamed(context, '/employer-dashboard'); break;
-          case 3: Navigator.pushReplacementNamed(context, '/job-history'); break;
-          case 4: Navigator.pushReplacementNamed(context, '/profile'); break;
+          case 3: Navigator.pushReplacementNamed(context, '/profile'); break;
+          case 4:
+            UserService.logout();
+            Navigator.pushReplacementNamed(context, '/');
+            break;
         }
       },
     );

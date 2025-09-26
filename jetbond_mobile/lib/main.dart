@@ -10,7 +10,7 @@ import 'widgets/job_card.dart';
 import 'utils/date_utils.dart';
 import 'services/notification_service.dart';
 import 'notifications_screen.dart';
-import 'job_management_screen.dart';
+
 import 'widgets/app_navigation_bar.dart';
 import 'admin_screen.dart';
 
@@ -42,7 +42,7 @@ class JetBondApp extends StatelessWidget {
         '/job-history': (context) => JobHistoryScreen(),
         '/employee-work-history': (context) => EmployeeWorkHistoryScreen(employeeId: UserService.currentUserId ?? ''),
         '/notifications': (context) => NotificationsScreen(),
-        '/job-management': (context) => JobManagementScreen(),
+
         '/admin': (context) => AdminScreen(),
       },
     );
@@ -1002,7 +1002,7 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
       final data = await ApiService.get('/jobs?employerId=${UserService.currentUserId}');
       final allJobs = data is List ? List<dynamic>.from(data) : [];
       setState(() {
-        myJobs = allJobs.where((job) => job['status'] == 'matching' || job['status'] == 'pending').toList();
+        myJobs = allJobs.where((job) => job['status'] == 'matching' || job['status'] == 'pending' || job['status'] == 'assigned').toList();
         isLoading = false;
       });
     } catch (e) {
@@ -1224,11 +1224,6 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
                               Icon(Icons.work_outline, size: 64, color: Colors.grey),
                               SizedBox(height: 16),
                               Text('No jobs posted yet'),
-                              SizedBox(height: 8),
-                              ElevatedButton(
-                                onPressed: () => Navigator.pushNamed(context, '/post-job'),
-                                child: Text('Post Your First Job'),
-                              ),
                             ],
                           ),
                         )
@@ -1289,6 +1284,21 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
                                       ],
                                     ),
                                     SizedBox(height: 12),
+                                    if (job['selectedEmployeeId'] != null && job['status'] == 'assigned')
+                                      Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            'Employee: ${job['selectedEmployeeId']}',
+                                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                                          ),
+                                          Text(
+                                            'Selected: ${_formatDate(job['selectedAt'])}',
+                                            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                                          ),
+                                          SizedBox(height: 8),
+                                        ],
+                                      ),
                                     Row(
                                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                       children: [
@@ -1301,6 +1311,17 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
                                         ),
                                         Row(
                                           children: [
+                                            if (job['status'] == 'assigned')
+                                              ElevatedButton(
+                                                onPressed: () => _completeJob(job['jobId']),
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor: Colors.green,
+                                                ),
+                                                child: Text(
+                                                  'Complete Job',
+                                                  style: TextStyle(color: Colors.white),
+                                                ),
+                                              ),
                                             if (job['status'] == 'pending')
                                               ElevatedButton(
                                                 onPressed: () => _completeJob(job['jobId']),
@@ -1441,6 +1462,17 @@ class _EmployerDashboardState extends State<EmployerDashboard> {
       case 'neutral': return '👌 Average Performance';
       case 'bad': return '👎 Poor Performance';
       default: return rating;
+    }
+  }
+
+  String _formatDate(String? dateStr) {
+    if (dateStr == null) return 'Unknown';
+    try {
+      final utcDate = DateTime.parse(dateStr);
+      final localDate = utcDate.toLocal();
+      return '${localDate.day}/${localDate.month} ${localDate.hour}:${localDate.minute.toString().padLeft(2, '0')}';
+    } catch (e) {
+      return 'Unknown';
     }
   }
 
