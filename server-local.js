@@ -681,7 +681,7 @@ app.get('/jobs/:id/applicants', async (req, res) => {
       if (employee) {
         applicants.push({
           employeeId: response.employeeId,
-          name: employee.profiles?.employee?.name || 'Unknown',
+          name: employee.profiles?.employee?.name || employee.userId.split('@')[0] || 'Unknown',
           respondedAt: response.respondedAt,
           profile: employee.profiles?.employee || {}
         });
