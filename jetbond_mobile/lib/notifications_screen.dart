@@ -90,6 +90,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       ],
                     ),
                     isThreeLine: true,
+                    onTap: () => _handleNotificationTap(notification),
                   ),
                 );
               },
@@ -108,6 +109,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         return Colors.orange;
       case 'job_cancelled':
         return Colors.red;
+      case 'job_completed':
+        return Colors.green;
       case 'status_reset':
         return Colors.grey;
       default:
@@ -125,6 +128,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         return Icons.check_circle;
       case 'job_cancelled':
         return Icons.cancel;
+      case 'job_completed':
+        return Icons.check_circle_outline;
       case 'status_reset':
         return Icons.refresh;
       default:
@@ -142,6 +147,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         return notification['selected'] ? 'Job Offer!' : 'Application Update';
       case 'job_cancelled':
         return 'Job Cancelled';
+      case 'job_completed':
+        return 'Job Completed';
       case 'status_reset':
         return 'Status Updated';
       default:
@@ -161,11 +168,88 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           : 'You were not selected for this job';
       case 'job_cancelled':
         return 'Job "${notification['jobTitle']}" has been cancelled';
+      case 'job_completed':
+        return 'Job "${notification['jobTitle']}" has been completed';
       case 'status_reset':
         return notification['message'] ?? 'Your status has been updated';
       default:
         return 'New notification received';
     }
+  }
+
+  void _handleNotificationTap(Map<String, dynamic> notification) {
+    final jobId = notification['jobId'];
+    if (jobId != null && _isJobRelatedNotification(notification['type'])) {
+      // Check if job is canceled or completed - prevent navigation
+      if (_isCanceledJobNotification(notification)) {
+        _showJobCanceledDialog(notification);
+      } else if (_isOldJobNotification(notification)) {
+        _showJobNoLongerAvailableDialog(notification);
+      } else {
+        // Navigate to dashboard and highlight the specific job
+        final route = UserService.currentUserType == 'employee' 
+          ? '/employee-dashboard' 
+          : '/employer-dashboard';
+        Navigator.pushReplacementNamed(context, route, arguments: {'highlightJobId': jobId});
+      }
+    }
+  }
+
+  bool _isOldJobNotification(Map<String, dynamic> notification) {
+    final type = notification['type'];
+    return ['job_completed', 'selection_result'].contains(type);
+  }
+
+  bool _isCanceledJobNotification(Map<String, dynamic> notification) {
+    return notification['type'] == 'job_cancelled' || 
+           (notification['type'] == 'job_match' && _isJobCanceled(notification['jobId']));
+  }
+
+  bool _isJobCanceled(String? jobId) {
+    // Check if there's a job_cancelled notification for this job
+    return notifications.any((n) => n['jobId'] == jobId && n['type'] == 'job_cancelled');
+  }
+
+  void _showJobNoLongerAvailableDialog(Map<String, dynamic> notification) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Job No Longer Available'),
+        content: Text(
+          'This job "${notification['jobTitle'] ?? 'Unknown Job'}" is no longer active. '
+          'It may have been completed or expired.'
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showJobCanceledDialog(Map<String, dynamic> notification) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Job Canceled'),
+        content: Text(
+          'This job "${notification['jobTitle'] ?? 'Unknown Job'}" has been canceled '
+          'and is no longer available.'
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool _isJobRelatedNotification(String? type) {
+    return ['job_match', 'job_response', 'selection_result', 'job_cancelled', 'job_completed', 'job_pending'].contains(type);
   }
 
   String _formatTimestamp(String? timestamp) {

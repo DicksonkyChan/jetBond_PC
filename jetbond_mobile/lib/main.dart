@@ -34,7 +34,10 @@ class JetBondApp extends StatelessWidget {
       ),
       home: LoginScreen(),
       routes: {
-        '/employee-dashboard': (context) => EmployeeDashboard(),
+        '/employee-dashboard': (context) {
+          final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+          return EmployeeDashboard(highlightJobId: args?['highlightJobId']);
+        },
         '/employer-dashboard': (context) => EmployerDashboard(),
         '/profile': (context) => ProfileScreen(),
         '/post-job': (context) => PostJobScreen(),
@@ -256,7 +259,9 @@ class _LoginScreenState extends State<LoginScreen> {
 }
 
 class EmployeeDashboard extends StatefulWidget {
-  const EmployeeDashboard({super.key});
+  final String? highlightJobId;
+  
+  const EmployeeDashboard({super.key, this.highlightJobId});
 
   @override
   _EmployeeDashboardState createState() => _EmployeeDashboardState();
@@ -270,16 +275,20 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   String? activeApplicationJobId;
   Map<String, dynamic>? currentJob;
   bool isLoading = false;
+  String? highlightJobId;
   @override
   void initState() {
     super.initState();
     appliedJobs = <String>{};
     canceledApplications = <String>{};
+    highlightJobId = widget.highlightJobId;
     _loadJobs();
     NotificationService.addListener(_onNotification);
   }
 
   void _onNotification(Map<String, dynamic> notification) {
+    final stopwatch = Stopwatch()..start();
+    print('🔔 [PERF] _onNotification() started: ${notification['type']}');
     print('🔔 Employee received notification: $notification');
     if (mounted) {
       NotificationService.showNotificationSnackBar(context, notification);
@@ -310,6 +319,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         });
       }
       
+      print('🔔 [PERF] Calling _loadJobs() from notification at ${stopwatch.elapsedMilliseconds}ms');
       _loadJobs(); // Always refresh on any notification
     }
   }
@@ -321,17 +331,31 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   }
 
   Future<void> _loadJobs() async {
+    final stopwatch = Stopwatch()..start();
+    print('🚀 [PERF] _loadJobs() started');
+    
     setState(() => isLoading = true);
     try {
+      print('🚀 [PERF] Calling ApiService.get(/jobs) at ${stopwatch.elapsedMilliseconds}ms');
       final data = await ApiService.get('/jobs');
+      print('🚀 [PERF] ApiService.get(/jobs) completed at ${stopwatch.elapsedMilliseconds}ms');
+      
+      print('🚀 [PERF] Calling _loadCurrentJob() at ${stopwatch.elapsedMilliseconds}ms');
       await _loadCurrentJob();
+      print('🚀 [PERF] _loadCurrentJob() completed at ${stopwatch.elapsedMilliseconds}ms');
+      
+      print('🚀 [PERF] Calling _loadCanceledApplications() at ${stopwatch.elapsedMilliseconds}ms');
       await _loadCanceledApplications();
+      print('🚀 [PERF] _loadCanceledApplications() completed at ${stopwatch.elapsedMilliseconds}ms');
+      
       setState(() {
         jobs = data is List ? List<dynamic>.from(data) : [];
         isLoading = false;
       });
+      print('🚀 [PERF] _loadJobs() TOTAL TIME: ${stopwatch.elapsedMilliseconds}ms');
     } catch (e) {
       setState(() => isLoading = false);
+      print('❌ [PERF] _loadJobs() ERROR at ${stopwatch.elapsedMilliseconds}ms: $e');
       _showSnackBar('Error loading jobs: $e');
     }
   }
@@ -610,9 +634,11 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                           itemCount: jobs.length,
                           itemBuilder: (context, index) {
                             final job = jobs[index];
+                            final isHighlighted = highlightJobId == job['jobId'];
                             return Card(
                               margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                              elevation: 4,
+                              elevation: isHighlighted ? 8 : 4,
+                              color: isHighlighted ? Colors.blue.shade50 : null,
                               child: InkWell(
                                 onTap: () {
                                   Navigator.pushNamed(
@@ -1568,18 +1594,8 @@ class _PostJobScreenState extends State<PostJobScreen> {
 
       if (jobResponse.statusCode == 201) {
         final job = json.decode(jobResponse.body);
-        
-        // Find matches
-        final matchResponse = await http.post(
-          Uri.parse('http://localhost:8080/jobs/${job['jobId']}/matches'),
-          headers: {'Content-Type': 'application/json'},
-        );
-
-        if (matchResponse.statusCode == 200) {
-          final matches = json.decode(matchResponse.body);
-          _showSnackBar('Job posted! Found ${matches['count']} potential matches');
-          Navigator.pop(context, true);
-        }
+        _showSnackBar('Job posted successfully!');
+        Navigator.pop(context, true);
       } else {
         _showSnackBar('Failed to post job');
       }

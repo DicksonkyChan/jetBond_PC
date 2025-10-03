@@ -7,6 +7,8 @@ class NotificationService {
   static String? _currentUserId;
   static final List<Function(Map<String, dynamic>)> _listeners = [];
   static final List<Map<String, dynamic>> _notifications = [];
+  static int _unreadCount = 0;
+  static final List<Function(int)> _unreadListeners = [];
 
   static void connect(String userId) {
     _currentUserId = userId;
@@ -53,10 +55,20 @@ class NotificationService {
 
   static void _handleNotification(Map<String, dynamic> data) {
     print('🔔 Handling notification: $data');
+    data['isRead'] = false;
     _notifications.insert(0, data);
     if (_notifications.length > 50) {
       _notifications.removeLast();
     }
+    
+    // Handle job cancellation - decrement instead of increment
+    if (data['type'] == 'job_cancelled') {
+      _decrementUnreadForJob(data['jobId']);
+    } else {
+      _unreadCount++;
+    }
+    
+    _notifyUnreadListeners();
     
     print('🔔 Notifying ${_listeners.length} listeners');
     for (final listener in _listeners) {
@@ -81,6 +93,50 @@ class NotificationService {
     _channel = null;
     _currentUserId = null;
     _listeners.clear();
+    _unreadListeners.clear();
+    _unreadCount = 0;
+  }
+
+  static void addUnreadListener(Function(int) listener) {
+    _unreadListeners.add(listener);
+  }
+
+  static void removeUnreadListener(Function(int) listener) {
+    _unreadListeners.remove(listener);
+  }
+
+  static void _notifyUnreadListeners() {
+    for (final listener in _unreadListeners) {
+      listener(_unreadCount);
+    }
+  }
+
+  static int getUnreadCount() {
+    return _unreadCount;
+  }
+
+  static void markAllAsRead() {
+    for (final notification in _notifications) {
+      notification['isRead'] = true;
+    }
+    _unreadCount = 0;
+    _notifyUnreadListeners();
+  }
+
+  static void _decrementUnreadForJob(String? jobId) {
+    if (jobId == null) return;
+    
+    int decrementCount = 0;
+    for (final notification in _notifications) {
+      if (notification['jobId'] == jobId && 
+          notification['isRead'] == false &&
+          notification['type'] == 'job_match') {
+        decrementCount++;
+      }
+    }
+    
+    _unreadCount = (_unreadCount - decrementCount).clamp(0, _unreadCount);
+    print('🔔 Decremented unread count by $decrementCount for canceled job $jobId');
   }
 
   static void showNotificationSnackBar(BuildContext context, Map<String, dynamic> notification) {

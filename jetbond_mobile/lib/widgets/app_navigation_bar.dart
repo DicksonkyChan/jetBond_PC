@@ -1,18 +1,55 @@
 import 'package:flutter/material.dart';
 import '../main.dart';
+import '../services/notification_service.dart';
 
-class AppNavigationBar extends StatelessWidget {
+class AppNavigationBar extends StatefulWidget {
   final int currentIndex;
   
   const AppNavigationBar({super.key, required this.currentIndex});
 
   @override
+  _AppNavigationBarState createState() => _AppNavigationBarState();
+}
+
+class _AppNavigationBarState extends State<AppNavigationBar> {
+  int _unreadCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _unreadCount = NotificationService.getUnreadCount();
+    NotificationService.addUnreadListener(_onUnreadCountChanged);
+  }
+
+  @override
+  void dispose() {
+    NotificationService.removeUnreadListener(_onUnreadCountChanged);
+    super.dispose();
+  }
+
+  void _onUnreadCountChanged(int count) {
+    if (mounted) {
+      setState(() {
+        _unreadCount = count;
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return BottomNavigationBar(
       type: BottomNavigationBarType.fixed,
-      currentIndex: currentIndex,
+      currentIndex: widget.currentIndex,
       items: [
-        BottomNavigationBarItem(icon: Icon(Icons.notifications), label: 'Notifications'),
+        BottomNavigationBarItem(
+          icon: _unreadCount > 0 
+            ? Badge(
+                label: Text('$_unreadCount'),
+                child: Icon(Icons.notifications),
+              )
+            : Icon(Icons.notifications),
+          label: 'Notifications'
+        ),
         BottomNavigationBarItem(icon: Icon(Icons.history), label: 'History'),
         BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
         BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
@@ -20,7 +57,10 @@ class AppNavigationBar extends StatelessWidget {
       ],
       onTap: (index) {
         switch (index) {
-          case 0: Navigator.pushReplacementNamed(context, '/notifications'); break;
+          case 0: 
+            NotificationService.markAllAsRead();
+            Navigator.pushReplacementNamed(context, '/notifications'); 
+            break;
           case 1: 
             Navigator.pushReplacementNamed(context, 
               UserService.currentUserType == 'employee' ? '/employee-work-history' : '/job-history');

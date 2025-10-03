@@ -6,6 +6,7 @@ const http = require('http');
 const AWS = require('aws-sdk');
 const fs = require('fs');
 const path = require('path');
+const JobStateMachine = require('./job-state-machine');
 
 // Setup logging to file
 const logFile = path.join(__dirname, 'jetbond.log');
@@ -29,6 +30,9 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 const port = process.env.PORT || 8080;
+
+// Initialize state machine
+const stateMachine = new JobStateMachine();
 
 // DynamoDB table names
 const USERS_TABLE = process.env.USERS_TABLE || 'jetbond-users';
@@ -495,7 +499,8 @@ app.post('/jobs', async (req, res) => {
 function checkExpiredJobs() {
   const now = new Date();
   for (const [jobId, job] of jobs.entries()) {
-    if (job.status === 'matching' && new Date(job.expiresAt) <= now && !job.expiredAt) {
+    if (stateMachine.canTransition(job.status, 'expired', 'system') && 
+        new Date(job.expiresAt) <= now && !job.expiredAt) {
       job.status = 'expired';
       job.expiredAt = now.toISOString();
       saveJobToDynamoDB(job);
@@ -519,22 +524,29 @@ function checkExpiredJobs() {
 // Reset applicants status to open_to_work when job expires or is cancelled
 async function resetApplicantsStatus(job, reason = 'Job no longer available') {
   const responses = job.matchingWindow?.responses || [];
+  const trigger = reason.includes('cancelled') ? 'job_cancelled' : 'job_completed';
+  
   for (const response of responses) {
     const employee = users.get(response.employeeId);
-    if (employee && employee.employeeStatus !== 'open_to_work') {
-      employee.employeeStatus = 'open_to_work';
-      employee.currentJobId = null;
-      await saveUserToDynamoDB(employee);
-      logToFile(`Reset employee ${response.employeeId} status to open_to_work: ${reason}`);
-      
-      // Notify employee
-      sendNotification(response.employeeId, {
-        type: 'status_reset',
-        jobId: job.jobId,
-        jobTitle: job.title,
-        message: `Your status has been reset to "Open to work". Reason: ${reason}`,
-        timestamp: new Date().toISOString()
-      });
+    if (employee && stateMachine.canEmployeeTransition(employee.employeeStatus, 'open_to_work')) {
+      try {
+        stateMachine.validateEmployeeTransition(employee, 'open_to_work', trigger);
+        employee.employeeStatus = 'open_to_work';
+        employee.currentJobId = null;
+        await saveUserToDynamoDB(employee);
+        logToFile(`Reset employee ${response.employeeId} status to open_to_work: ${reason}`);
+        
+        // Notify employee
+        sendNotification(response.employeeId, {
+          type: 'status_reset',
+          jobId: job.jobId,
+          jobTitle: job.title,
+          message: `Your status has been reset to "Open to work". Reason: ${reason}`,
+          timestamp: new Date().toISOString()
+        });
+      } catch (error) {
+        logToFile(`Failed to reset employee ${response.employeeId} status: ${error.message}`);
+      }
     }
   }
 }
@@ -550,8 +562,10 @@ app.get('/jobs', async (req, res) => {
       // For employers: show all their jobs with status info
       jobList = Array.from(jobs.values()).filter(job => job.employerId === employerId);
     } else {
-      // For employees: only show active matching jobs
-      jobList = Array.from(jobs.values()).filter(job => job.status === 'matching');
+      // For employees: only show jobs in matching status
+      jobList = Array.from(jobs.values()).filter(job => 
+        stateMachine.canTransition(job.status, 'assigned', 'employer') || job.status === 'matching'
+      );
     }
     
     if (district) {
@@ -725,6 +739,13 @@ app.post('/jobs/:id/respond', async (req, res) => {
       return res.json({ success: false, message: 'Cannot reapply after canceling application' });
     }
 
+    // Use state machine to validate employee status transition
+    try {
+      stateMachine.validateEmployeeTransition(employee, 'busy', 'apply_to_job');
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
     // Set employee status to busy when applying
     employee.employeeStatus = 'busy';
     employee.currentJobId = req.params.id;
@@ -766,7 +787,7 @@ app.post('/jobs/:id/respond', async (req, res) => {
 // Select employee endpoint
 app.post('/jobs/:id/select', async (req, res) => {
   try {
-    const { selectedEmployeeId } = req.body;
+    const { selectedEmployeeId, employerId } = req.body;
     if (!selectedEmployeeId) {
       return res.status(400).json({ error: 'Missing selectedEmployeeId' });
     }
@@ -774,6 +795,13 @@ app.post('/jobs/:id/select', async (req, res) => {
     const job = jobs.get(req.params.id);
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
+    }
+
+    // Use state machine validation
+    try {
+      stateMachine.validateTransition(job, 'assigned', employerId || job.employerId, 'employer');
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
     }
 
     job.status = 'assigned';
@@ -795,11 +823,16 @@ app.post('/jobs/:id/select', async (req, res) => {
       
       if (!isSelected) {
         const employee = users.get(response.employeeId);
-        if (employee && employee.employeeStatus !== 'open_to_work') {
-          employee.employeeStatus = 'open_to_work';
-          employee.currentJobId = null;
-          await saveUserToDynamoDB(employee);
-          logToFile(`Released employee ${response.employeeId} back to open_to_work (not selected)`);
+        if (employee && stateMachine.canEmployeeTransition(employee.employeeStatus, 'open_to_work')) {
+          try {
+            stateMachine.validateEmployeeTransition(employee, 'open_to_work', 'not_selected');
+            employee.employeeStatus = 'open_to_work';
+            employee.currentJobId = null;
+            await saveUserToDynamoDB(employee);
+            logToFile(`Released employee ${response.employeeId} back to open_to_work (not selected)`);
+          } catch (error) {
+            logToFile(`Failed to release employee ${response.employeeId}: ${error.message}`);
+          }
         }
       }
 
@@ -910,9 +943,17 @@ app.post('/jobs/:id/cancel-application', async (req, res) => {
 // Cancel job endpoint
 app.put('/jobs/:id/cancel', async (req, res) => {
   try {
+    const { employerId } = req.body;
     const job = jobs.get(req.params.id);
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
+    }
+
+    // Use state machine validation
+    try {
+      stateMachine.validateTransition(job, 'cancelled', employerId || job.employerId, 'employer');
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
     }
 
     // Update job status to cancelled
@@ -971,8 +1012,11 @@ app.put('/jobs/:id/employee-complete', async (req, res) => {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    if (job.status !== 'assigned') {
-      return res.status(400).json({ error: `Job is not in assigned status. Current status: ${job.status}` });
+    // Use state machine validation
+    try {
+      stateMachine.validateTransition(job, 'pending', employeeId, 'employee');
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
     }
 
     // Set job to pending employer completion
@@ -993,9 +1037,9 @@ app.put('/jobs/:id/employee-complete', async (req, res) => {
     
     await saveJobToDynamoDB(job);
 
-    // Reset employee status to open_to_work
+    // Reset employee status to open_to_work using state machine
     const employee = users.get(employeeId);
-    if (employee) {
+    if (employee && stateMachine.canEmployeeTransition(employee.employeeStatus, 'open_to_work')) {
       employee.employeeStatus = 'open_to_work';
       employee.currentJobId = null;
       await saveUserToDynamoDB(employee);
@@ -1021,15 +1065,20 @@ app.put('/jobs/:id/employee-complete', async (req, res) => {
 // Employer complete job endpoint (final completion)
 app.put('/jobs/:id/complete', async (req, res) => {
   try {
-    const { rating } = req.body;
+    const { rating, employerId } = req.body;
     const job = jobs.get(req.params.id);
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    if (job.status !== 'assigned' && job.status !== 'pending') {
-      logToFile(`Job ${req.params.id} has status: ${job.status}, expected: assigned or pending`);
-      return res.status(400).json({ error: `Job is not in assigned or pending status. Current status: ${job.status}` });
+    // Use state machine validation - allow completion from both assigned and pending
+    const canComplete = stateMachine.canTransition(job.status, 'completed', 'employer');
+    if (!canComplete) {
+      return res.status(400).json({ error: `Cannot complete job from ${job.status} status` });
+    }
+    
+    if (job.employerId !== (employerId || job.employerId)) {
+      return res.status(400).json({ error: 'Only job employer can complete job' });
     }
 
     // Update job status to completed
