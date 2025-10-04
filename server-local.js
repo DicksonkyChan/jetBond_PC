@@ -7,6 +7,7 @@ const AWS = require('aws-sdk');
 const fs = require('fs');
 const path = require('path');
 const JobStateMachine = require('./job-state-machine');
+const AIMatchingService = require('./ai-matching-service');
 
 // Setup logging to file
 const logFile = path.join(__dirname, 'jetbond.log');
@@ -31,8 +32,9 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 const port = process.env.PORT || 8080;
 
-// Initialize state machine
+// Initialize state machine and AI matching
 const stateMachine = new JobStateMachine();
+const aiMatcher = new AIMatchingService();
 
 // DynamoDB table names
 const USERS_TABLE = process.env.USERS_TABLE || 'jetbond-users';
@@ -440,52 +442,42 @@ app.post('/jobs', async (req, res) => {
       timestamp: new Date().toISOString()
     });
     
-    // Automatically find and notify matching employees
+    // Find qualified employees (basic location and rate filtering)
     try {
       const availableEmployees = Array.from(users.values())
         .filter(user => user.currentMode === 'employee' && user.employeeStatus === 'open_to_work');
 
-      const matches = availableEmployees.map(employee => {
-        let score = 60; // Base score
+      const qualifiedEmployees = availableEmployees.filter(employee => {
         const profile = employee.profiles?.employee;
+        if (!profile) return false;
         
-        if (profile) {
-          // District match bonus
-          if (profile.preferredDistricts?.includes(district)) {
-            score += 30;
-          }
-          
-          // Rate compatibility bonus
-          const minRate = profile.hourlyRateRange?.min || 0;
-          const maxRate = profile.hourlyRateRange?.max || 999;
-          if (hourlyRate >= minRate && hourlyRate <= maxRate) {
-            score += 20;
-          }
-        }
+        // Location match
+        const locationMatch = profile.preferredDistricts?.includes(district) || false;
         
-        return {
-          employeeId: employee.userId,
-          matchScore: Math.min(score, 100),
-          matchedAt: new Date().toISOString()
-        };
-      }).slice(0, 10);
+        // Rate compatibility
+        const minRate = profile.hourlyRateRange?.min || 0;
+        const maxRate = profile.hourlyRateRange?.max || 999;
+        const rateMatch = hourlyRate >= minRate && hourlyRate <= maxRate;
+        
+        return locationMatch && rateMatch;
+      });
 
-      // Send job_match notifications to matched employees
-      logToFile(`📢 Auto-sending job_match notifications to ${matches.length} employees for new job ${jobId}`);
-      for (const match of matches) {
-        sendNotification(match.employeeId, {
+      // Send job_match notifications to qualified employees
+      logToFile(`📝 Found ${qualifiedEmployees.length} qualified employees for job ${jobId}`);
+      for (const employee of qualifiedEmployees) {
+        sendNotification(employee.userId, {
           type: 'job_match',
           jobId,
           jobTitle: title,
           district,
           hourlyRate,
-          matchScore: match.matchScore,
+          matchScore: 75, // Basic qualification score
           message: `New job match: "${title}" in ${district}`,
           timestamp: new Date().toISOString()
         });
       }
     } catch (matchError) {
-      logToFile(`⚠️ Error auto-matching for job ${jobId}: ${matchError}`);
+      logToFile(`⚠️ Error finding qualified employees for job ${jobId}: ${matchError}`);
     }
     
     res.status(201).json({ jobId, message: 'Job created successfully', expiresAt });
@@ -579,7 +571,7 @@ app.get('/jobs', async (req, res) => {
   }
 });
 
-// Simple matching endpoint
+// AI-powered matching endpoint
 app.post('/jobs/:id/matches', async (req, res) => {
   try {
     const job = jobs.get(req.params.id);
@@ -587,49 +579,36 @@ app.post('/jobs/:id/matches', async (req, res) => {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    // Simple matching - find available employees
+    // AI matching - find available employees
     const availableEmployees = Array.from(users.values())
       .filter(user => user.currentMode === 'employee' && user.employeeStatus === 'open_to_work');
 
-    const matches = availableEmployees.map(employee => {
-      // Simple scoring based on district match and rate compatibility
-      let score = 60; // Base score
-      const profile = employee.profiles?.employee;
-      
-      if (profile) {
-        // District match bonus
-        if (profile.preferredDistricts?.includes(job.district)) {
-          score += 30;
-        }
-        
-        // Rate compatibility bonus
-        const minRate = profile.hourlyRateRange?.min || 0;
-        const maxRate = profile.hourlyRateRange?.max || 999;
-        if (job.hourlyRate >= minRate && job.hourlyRate <= maxRate) {
-          score += 20;
-        }
-      }
-      
-      return {
-        employeeId: employee.userId,
-        matchScore: Math.min(score, 100),
-        matchedAt: new Date().toISOString()
-      };
-    }).slice(0, 10);
+    // Get employer's language preference
+    const employer = users.get(job.employerId);
+    const employerLanguage = employer?.profiles?.employer?.preferredLanguage || 'English';
+    
+    const matches = await aiMatcher.findMatches(job, availableEmployees, employerLanguage);
 
     // Send notifications to matched employees
-    logToFile(`📢 Sending job_match notifications to ${matches.length} employees for job ${req.params.id}`);
+    logToFile(`🤖 AI matching found ${matches.length} employees for job ${req.params.id}`);
     for (const match of matches) {
-      sendNotification(match.employeeId, {
+      const notification = {
         type: 'job_match',
         jobId: req.params.id,
         jobTitle: job.title,
         district: job.district,
         hourlyRate: job.hourlyRate,
         matchScore: match.matchScore,
-        message: `New job match: "${job.title}" in ${job.district}`,
+        message: `New job match: "${job.title}" in ${job.district} (${match.matchScore}% match)`,
         timestamp: new Date().toISOString()
-      });
+      };
+      
+      // Add AI-specific data if available
+      if (match.reasoning) notification.reasoning = match.reasoning;
+      if (match.strengths) notification.strengths = match.strengths;
+      if (match.languageMatch) notification.languageMatch = match.languageMatch;
+      
+      sendNotification(match.employeeId, notification);
     }
     
     res.json({ matches, count: matches.length });
@@ -679,7 +658,83 @@ app.get('/employee/:id/current-job', async (req, res) => {
   }
 });
 
-// Get job applicants endpoint
+// AI job recommendations endpoint
+app.get('/employee/:id/recommendations', async (req, res) => {
+  try {
+    const employeeId = req.params.id;
+    const availableJobs = Array.from(jobs.values())
+      .filter(job => job.status === 'matching');
+    
+    const recommendations = await aiMatcher.getJobRecommendations(employeeId, availableJobs, users);
+    
+    logToFile(`🤖 Generated ${recommendations.length} job recommendations for employee ${employeeId}`);
+    res.json({ recommendations, count: recommendations.length });
+  } catch (error) {
+    logToFile(`Get recommendations error: ${error}`);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// AI applicant ranking endpoint for employers
+app.post('/jobs/:id/ai-rank-applicants', async (req, res) => {
+  try {
+    const job = jobs.get(req.params.id);
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    const responses = job.matchingWindow?.responses || [];
+    const applicantEmployees = [];
+
+    // Get employee profiles for all applicants
+    for (const response of responses) {
+      const employee = users.get(response.employeeId);
+      if (employee) {
+        applicantEmployees.push({
+          ...employee,
+          appliedAt: response.respondedAt
+        });
+      }
+    }
+
+    if (applicantEmployees.length === 0) {
+      return res.json({ rankedApplicants: [], count: 0 });
+    }
+
+    // Get employer's language preference
+    const employer = users.get(job.employerId);
+    const employerLanguage = employer?.profiles?.employer?.preferredLanguage || 'English';
+    
+    // Use AI to rank the applicants
+    const aiRanking = await aiMatcher.findMatches(job, applicantEmployees, employerLanguage);
+    
+    // Combine AI ranking with application data
+    const rankedApplicants = aiRanking.map(match => {
+      const employee = applicantEmployees.find(emp => emp.userId === match.employeeId);
+      const profile = employee?.profiles?.employee || {};
+      
+      return {
+        employeeId: match.employeeId,
+        name: profile.name || employee?.userId.split('@')[0] || 'Unknown',
+        appliedAt: employee?.appliedAt,
+        matchScore: match.matchScore,
+        reasoning: match.reasoning,
+        strengths: match.strengths || [],
+        concerns: match.concerns || [],
+        profile: profile,
+        ratings: employee?.employeeRatings || { good: 0, neutral: 0, bad: 0 }
+      };
+    });
+
+    logToFile(`🤖 AI ranked ${rankedApplicants.length} applicants for job ${req.params.id}`);
+    res.json({ rankedApplicants, count: rankedApplicants.length });
+  } catch (error) {
+    logToFile(`AI ranking error: ${error}`);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get job applicants endpoint (first-come-first-served)
 app.get('/jobs/:id/applicants', async (req, res) => {
   try {
     const job = jobs.get(req.params.id);
@@ -690,14 +745,22 @@ app.get('/jobs/:id/applicants', async (req, res) => {
     const responses = job.matchingWindow?.responses || [];
     const applicants = [];
 
-    for (const response of responses) {
+    // Sort by application time (first-come-first-served)
+    const sortedResponses = responses.sort((a, b) => 
+      new Date(a.respondedAt) - new Date(b.respondedAt)
+    );
+
+    for (const response of sortedResponses) {
       const employee = users.get(response.employeeId);
       if (employee) {
+        const profile = employee.profiles?.employee || {};
         applicants.push({
           employeeId: response.employeeId,
-          name: employee.profiles?.employee?.name || employee.userId.split('@')[0] || 'Unknown',
+          name: profile.name || employee.userId.split('@')[0] || 'Unknown',
           respondedAt: response.respondedAt,
-          profile: employee.profiles?.employee || {}
+          profile: profile,
+          ratings: employee.employeeRatings || { good: 0, neutral: 0, bad: 0 },
+          isQualified: isEmployeeQualified(employee, job)
         });
       }
     }
@@ -708,6 +771,22 @@ app.get('/jobs/:id/applicants', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// Helper function to check if employee is qualified
+function isEmployeeQualified(employee, job) {
+  const profile = employee.profiles?.employee;
+  if (!profile) return false;
+  
+  // Location match
+  const locationMatch = profile.preferredDistricts?.includes(job.district) || false;
+  
+  // Rate compatibility
+  const minRate = profile.hourlyRateRange?.min || 0;
+  const maxRate = profile.hourlyRateRange?.max || 999;
+  const rateMatch = job.hourlyRate >= minRate && job.hourlyRate <= maxRate;
+  
+  return locationMatch && rateMatch;
+}
 
 // Job response endpoint
 app.post('/jobs/:id/respond', async (req, res) => {

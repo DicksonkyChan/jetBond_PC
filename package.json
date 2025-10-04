@@ -11,7 +11,11 @@
     "windows-setup": "powershell -ExecutionPolicy Bypass -File setup.ps1"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-agent-runtime": "^3.901.0",
+    "@aws-sdk/client-dynamodb": "^3.902.0",
+    "@aws-sdk/lib-dynamodb": "^3.902.0",
     "aws-sdk": "^2.1691.0",
+    "axios": "^1.12.2",
     "dotenv": "^16.6.1",
     "express": "^4.18.2",
     "node-fetch": "^2.6.7",
